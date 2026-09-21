@@ -28,7 +28,7 @@ export default function App() {
 
   // Check saved user session
   useEffect(() => {
-    const savedUser = localStorage.getItem('pin_chat_user');
+    const savedUser = localStorage.getItem('schatpin_chat_user');
     if (savedUser) {
       const userData = JSON.parse(savedUser);
       verifyUser(userData.pin);
@@ -39,16 +39,16 @@ export default function App() {
     const supabase = getSupabase();
     try {
       const { data, error } = await supabase
-        .from('users')
+        .from('schatpin_users')
         .select('*')
         .eq('pin', pin)
         .single();
 
       if (data && !error) {
         setUser(data);
-        localStorage.setItem('pin_chat_user', JSON.stringify(data));
+        localStorage.setItem('schatpin_chat_user', JSON.stringify(data));
       } else {
-        localStorage.removeItem('pin_chat_user');
+        localStorage.removeItem('schatpin_chat_user');
       }
     } catch (err) {
       console.error('Failed to verify user', err);
@@ -65,13 +65,13 @@ export default function App() {
 
     // Subscribe to new messages
     const channel = supabase
-      .channel('public:messages')
+      .channel('public:schatpin_messages')
       .on(
         'postgres_changes',
         {
           event: 'INSERT',
           schema: 'public',
-          table: 'messages',
+          table: 'schatpin_messages',
         },
         (payload) => {
           const newMsg = payload.new;
@@ -132,7 +132,7 @@ export default function App() {
       while (!inserted) {
         pin = generatePin();
         const { data, error } = await supabase
-          .from('users')
+          .from('schatpin_users')
           .insert([{ pin, name: inputName.trim(), avatar }])
           .select()
           .single();
@@ -146,7 +146,7 @@ export default function App() {
       }
 
       setUser(userData);
-      localStorage.setItem('pin_chat_user', JSON.stringify(userData));
+      localStorage.setItem('schatpin_chat_user', JSON.stringify(userData));
     } catch (err) {
       setError(err.message || 'Gagal mendaftar');
     }
@@ -164,7 +164,7 @@ export default function App() {
     try {
       const cleanPin = inputPin.trim().toUpperCase();
       const { data, error } = await supabase
-        .from('users')
+        .from('schatpin_users')
         .select('*')
         .eq('pin', cleanPin)
         .single();
@@ -174,14 +174,14 @@ export default function App() {
       }
 
       setUser(data);
-      localStorage.setItem('pin_chat_user', JSON.stringify(data));
+      localStorage.setItem('schatpin_chat_user', JSON.stringify(data));
     } catch (err) {
       setError(err.message);
     }
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('pin_chat_user');
+    localStorage.removeItem('schatpin_chat_user');
     setUser(null);
     setSelectedContact(null);
     setMessages([]);
@@ -193,7 +193,7 @@ export default function App() {
 
     try {
       const { data, error } = await supabase
-        .from('contacts')
+        .from('schatpin_contacts')
         .select('contact_pin')
         .eq('user_pin', user.pin);
 
@@ -202,7 +202,7 @@ export default function App() {
       if (data && data.length > 0) {
         const contactPins = data.map(c => c.contact_pin);
         const { data: usersData, error: userError } = await supabase
-          .from('users')
+          .from('schatpin_users')
           .select('*')
           .in('pin', contactPins);
 
@@ -223,7 +223,7 @@ export default function App() {
 
     try {
       const { data, error } = await supabase
-        .from('messages')
+        .from('schatpin_messages')
         .select('*')
         .or(`and(sender_pin.eq.${user.pin},receiver_pin.eq.${selectedContact.contact_pin}),and(sender_pin.eq.${selectedContact.contact_pin},receiver_pin.eq.${user.pin})`)
         .order('timestamp', { ascending: true });
@@ -259,7 +259,7 @@ export default function App() {
     const supabase = getSupabase();
     try {
       const { data: targetUser, error: uErr } = await supabase
-        .from('users')
+        .from('schatpin_users')
         .select('*')
         .eq('pin', cleanContactPin)
         .single();
@@ -269,7 +269,7 @@ export default function App() {
       }
 
       const { error: cErr } = await supabase
-        .from('contacts')
+        .from('schatpin_contacts')
         .insert([{ user_pin: user.pin, contact_pin: cleanContactPin }]);
 
       if (cErr && cErr.code !== '23505') {
@@ -295,7 +295,7 @@ export default function App() {
 
     try {
       const { data, error } = await supabase
-        .from('messages')
+        .from('schatpin_messages')
         .insert([
           {
             sender_pin: user.pin,
@@ -335,7 +335,7 @@ export default function App() {
             <div className="inline-flex items-center justify-center w-16 h-16 bg-whatsapp-accent rounded-full text-white mb-4 shadow-lg">
               <Shield className="w-8 h-8" />
             </div>
-            <h1 className="text-2xl font-bold text-whatsapp-text">PIN Chat (BBM Style)</h1>
+            <h1 className="text-2xl font-bold text-whatsapp-text">PIN Chat v1.1</h1>
             <p className="text-whatsapp-muted text-sm mt-1">Chat aman tanpa nomor HP, berbasis PIN unik</p>
           </div>
 
@@ -525,7 +525,7 @@ export default function App() {
             <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[radial-gradient(#202c33_1px,transparent_1px)] bg-[size:16px_16px]">
               <div className="flex justify-center my-2">
                 <span className="px-3 py-1 bg-whatsapp-panel text-whatsapp-muted text-xs rounded-lg shadow border border-whatsapp-border flex items-center gap-1.5">
-                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> Pesan dienkripsi real-time via Supabase
+                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> Pesan dienkripsi real-time via Supabase v1.1
                 </span>
               </div>
 
@@ -569,7 +569,7 @@ export default function App() {
             <div className="w-20 h-20 bg-whatsapp-panel rounded-full flex items-center justify-center mb-4 border border-whatsapp-border shadow">
               <MessageSquare className="w-10 h-10 text-whatsapp-accent" />
             </div>
-            <h2 className="text-xl font-bold text-whatsapp-text mb-1">PIN Chat (Supabase Realtime)</h2>
+            <h2 className="text-xl font-bold text-whatsapp-text mb-1">PIN Chat v1.1 (Supabase)</h2>
             <p className="text-sm max-w-sm">Pilih kontak di sebelah kiri atau tambah teman baru menggunakan PIN BBM mereka untuk mulai mengobrol.</p>
           </div>
         )}
