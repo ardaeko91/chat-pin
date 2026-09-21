@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+.DS_Store
+*.apk
+.gradle/
+android/.gradle/
+android/app/build/
+android/build/
+backend/node_modules/
+backend/chat.db
