@@ -59,7 +59,7 @@ export default function App() {
 
   // Android Physical Back Button Handling
   useEffect(() => {
-    const backListener = CapApp.addListener('backButton', ({ canGoBack }) => {
+    const backListener = CapApp.addListener('backButton', () => {
       if (selectedContact || selectedGroup) {
         setSelectedContact(null);
         setSelectedGroup(null);
@@ -79,11 +79,11 @@ export default function App() {
     };
   }, [selectedContact, selectedGroup, showSettings, showAddModal, showGroupModal, showGroupInfo]);
 
-  // Initialize session & heartbeats
+  // Initialize session
   useEffect(() => {
     try {
-      const savedUser = localStorage.getItem('schatpin_chat_user_v4');
-      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v4') || '{}');
+      const savedUser = localStorage.getItem('schatpin_chat_user_v5');
+      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v5') || '{}');
       
       if (settings.notificationsEnabled !== undefined) {
         setNotificationsEnabled(settings.notificationsEnabled);
@@ -108,7 +108,7 @@ export default function App() {
     }
   }, []);
 
-  // Presence heartbeat (update last_seen every 15s)
+  // Presence heartbeat (update last_seen every 10s)
   useEffect(() => {
     if (!user) return;
     const supabase = getSupabase();
@@ -120,7 +120,7 @@ export default function App() {
     };
 
     updatePresence();
-    const interval = setInterval(updatePresence, 15000);
+    const interval = setInterval(updatePresence, 10000);
     return () => clearInterval(interval);
   }, [user]);
 
@@ -135,9 +135,9 @@ export default function App() {
 
       if (data && !error) {
         setUser(data);
-        localStorage.setItem('schatpin_chat_user_v4', JSON.stringify(data));
+        localStorage.setItem('schatpin_chat_user_v5', JSON.stringify(data));
       } else {
-        localStorage.removeItem('schatpin_chat_user_v4');
+        localStorage.removeItem('schatpin_chat_user_v5');
       }
     } catch (err) {
       console.error('Failed to verify user', err);
@@ -146,13 +146,13 @@ export default function App() {
 
   const updateSettings = (newNotif, newLock, newPin) => {
     try {
-      const current = JSON.parse(localStorage.getItem('schatpin_settings_v4') || '{}');
+      const current = JSON.parse(localStorage.getItem('schatpin_settings_v5') || '{}');
       const settings = {
         notificationsEnabled: newNotif !== undefined ? newNotif : notificationsEnabled,
         appLockEnabled: newLock !== undefined ? newLock : appLockEnabled,
         passcode: newPin !== undefined ? newPin : (current.passcode || '')
       };
-      localStorage.setItem('schatpin_settings_v4', JSON.stringify(settings));
+      localStorage.setItem('schatpin_settings_v5', JSON.stringify(settings));
       setNotificationsEnabled(settings.notificationsEnabled);
       setAppLockEnabled(settings.appLockEnabled);
     } catch (e) {
@@ -163,7 +163,7 @@ export default function App() {
   const handleUnlock = (e) => {
     e.preventDefault();
     try {
-      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v4') || '{}');
+      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v5') || '{}');
       if (enterPasscode === settings.passcode) {
         setIsLocked(false);
         setEnterPasscode('');
@@ -173,6 +173,27 @@ export default function App() {
       }
     } catch (e) {
       setIsLocked(false);
+    }
+  };
+
+  const playNotificationSound = () => {
+    if (!notificationsEnabled) return;
+    try {
+      if (typeof window !== 'undefined' && 'navigator' in window && navigator.vibrate) {
+        navigator.vibrate([200, 100, 200]);
+      }
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(659.25, ctx.currentTime); // E5
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.2);
+    } catch (e) {
+      // Audio context policy
     }
   };
 
@@ -203,7 +224,10 @@ export default function App() {
             });
             if (newMsg.receiver_pin === user.pin) {
               markAsRead(newMsg.id);
+              playNotificationSound();
             }
+          } else if (newMsg.receiver_pin === user.pin) {
+            playNotificationSideEffect(newMsg);
           }
         }
       )
@@ -230,6 +254,9 @@ export default function App() {
               if (!exists) return [...prev, newMsg];
               return prev;
             });
+            if (newMsg.sender_pin !== user.pin) {
+              playNotificationSound();
+            }
           }
         }
       )
@@ -243,12 +270,24 @@ export default function App() {
       })
       .subscribe();
 
+    const contactsInterval = setInterval(() => {
+      fetchContacts();
+    }, 10000);
+
     return () => {
       supabase.removeChannel(msgChannel);
       supabase.removeChannel(groupMsgChannel);
       supabase.removeChannel(typingChannel);
+      clearInterval(contactsInterval);
     };
-  }, [user, selectedContact, selectedGroup]);
+  }, [user, selectedContact, selectedGroup, notificationsEnabled]);
+
+  const playNotificationSideEffect = (msg) => {
+    playNotificationSound();
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      new Notification('Pesan Baru - PIN Chat', { body: msg.message });
+    }
+  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -259,7 +298,6 @@ export default function App() {
     await supabase.from('schatpin_messages').update({ is_read: true }).eq('id', msgId);
   };
 
-  // When opening a chat with contact, mark unread messages as read
   useEffect(() => {
     if (!user || !selectedContact) return;
     const markUnreadAsRead = async () => {
@@ -316,7 +354,7 @@ export default function App() {
       }
 
       setUser(userData);
-      localStorage.setItem('schatpin_chat_user_v4', JSON.stringify(userData));
+      localStorage.setItem('schatpin_chat_user_v5', JSON.stringify(userData));
     } catch (err) {
       setError(err.message || 'Gagal mendaftar');
     }
@@ -348,14 +386,14 @@ export default function App() {
       }
 
       setUser(data);
-      localStorage.setItem('schatpin_chat_user_v4', JSON.stringify(data));
+      localStorage.setItem('schatpin_chat_user_v5', JSON.stringify(data));
     } catch (err) {
       setError(err.message);
     }
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('schatpin_chat_user_v4');
+    localStorage.removeItem('schatpin_chat_user_v5');
     setUser(null);
     setSelectedContact(null);
     setSelectedGroup(null);
@@ -380,7 +418,7 @@ export default function App() {
 
         if (!error && data) {
           setUser(data);
-          localStorage.setItem('schatpin_chat_user_v4', JSON.stringify(data));
+          localStorage.setItem('schatpin_chat_user_v5', JSON.stringify(data));
         }
       } catch (err) {
         console.error('Failed to update avatar', err);
@@ -411,8 +449,8 @@ export default function App() {
           const now = new Date().getTime();
           setContacts(usersData.map(u => {
             const lastSeenTime = u.last_seen ? new Date(u.last_seen).getTime() : 0;
-            // Online if last_seen within 35 seconds
-            const online = (now - lastSeenTime) < 35000;
+            // Online if last_seen within 60 seconds
+            const online = (now - lastSeenTime) < 60000;
             return { contact_pin: u.pin, ...u, online };
           }));
         }
@@ -557,7 +595,7 @@ export default function App() {
     }
   };
 
-  // Compressed Image sending (solves payload size / silent fail issue)
+  // Robust Image Sending with Canvas Compression
   const handleImageSend = async (e) => {
     const file = e.target.files[0];
     if (!file || (!selectedContact && !selectedGroup)) return;
@@ -569,7 +607,7 @@ export default function App() {
         const canvas = document.createElement('canvas');
         let width = img.width;
         let height = img.height;
-        const maxDim = 800;
+        const maxDim = 600;
 
         if (width > height && width > maxDim) {
           height *= maxDim / width;
@@ -583,25 +621,31 @@ export default function App() {
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, width, height);
-        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
+        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.6);
 
         const supabase = getSupabase();
-        const mediaNotice = "[Gambar dikirim - Auto-delete 24 Jam]";
+        const mediaNotice = "[Foto Dikirim]";
 
-        if (selectedContact) {
-          const { data } = await supabase
-            .from('schatpin_messages')
-            .insert([{ sender_pin: user.pin, receiver_pin: selectedContact.contact_pin, message: mediaNotice, media_url: compressedBase64, media_type: 'image', is_read: false }])
-            .select()
-            .single();
-          if (data) setMessages(prev => [...prev, data]);
-        } else if (selectedGroup) {
-          const { data } = await supabase
-            .from('schatpin_group_messages')
-            .insert([{ group_id: selectedGroup.group_id, sender_pin: user.pin, sender_name: user.name, message: mediaNotice, media_url: compressedBase64, media_type: 'image' }])
-            .select()
-            .single();
-          if (data) setGroupMessages(prev => [...prev, data]);
+        try {
+          if (selectedContact) {
+            const { data, error } = await supabase
+              .from('schatpin_messages')
+              .insert([{ sender_pin: user.pin, receiver_pin: selectedContact.contact_pin, message: mediaNotice, media_url: compressedBase64, media_type: 'image', is_read: false }])
+              .select()
+              .single();
+            if (error) console.error('Image insert error:', error);
+            if (data) setMessages(prev => [...prev, data]);
+          } else if (selectedGroup) {
+            const { data, error } = await supabase
+              .from('schatpin_group_messages')
+              .insert([{ group_id: selectedGroup.group_id, sender_pin: user.pin, sender_name: user.name, message: mediaNotice, media_url: compressedBase64, media_type: 'image' }])
+              .select()
+              .single();
+            if (error) console.error('Group image insert error:', error);
+            if (data) setGroupMessages(prev => [...prev, data]);
+          }
+        } catch (err) {
+          console.error('Image send catch error:', err);
         }
       };
       img.src = event.target.result;
@@ -686,9 +730,23 @@ export default function App() {
     const supabase = getSupabase();
     const { data } = await supabase
       .from('schatpin_group_members')
-      .select('user_pin, user_name')
+      .select('user_pin')
       .eq('group_id', groupId);
-    if (data) setGroupMembers(data);
+
+    if (data && data.length > 0) {
+      const pins = data.map(m => m.user_pin);
+      const { data: usersData } = await supabase
+        .from('schatpin_users')
+        .select('pin, name, avatar')
+        .in('pin', pins);
+      if (usersData) {
+        setGroupMembers(usersData.map(u => ({ user_pin: u.pin, user_name: u.name, avatar: u.avatar })));
+      } else {
+        setGroupMembers(data.map(m => ({ user_pin: m.user_pin, user_name: m.user_name || 'User' })));
+      }
+    } else {
+      setGroupMembers([]);
+    }
     setShowGroupInfo(true);
   };
 
@@ -755,8 +813,8 @@ export default function App() {
             <div className="inline-flex items-center justify-center w-16 h-16 bg-whatsapp-accent rounded-full text-white mb-4 shadow-lg">
               <Shield className="w-8 h-8" />
             </div>
-            <h1 className="text-2xl font-bold text-whatsapp-text">PIN Chat v1.5</h1>
-            <p className="text-whatsapp-muted text-sm mt-1">Chat privat aman dengan fitur lengkap</p>
+            <h1 className="text-2xl font-bold text-whatsapp-text">PIN Chat v1.6</h1>
+            <p className="text-whatsapp-muted text-sm mt-1">Chat aman dengan perlindungan kata sandi</p>
           </div>
 
           <div className="flex rounded-lg bg-whatsapp-dark p-1 mb-6 border border-whatsapp-border">
@@ -921,7 +979,7 @@ export default function App() {
             <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[radial-gradient(#202c33_1px,transparent_1px)] bg-[size:16px_16px]">
               <div className="flex justify-center my-2">
                 <span className="px-3 py-1 bg-whatsapp-panel text-whatsapp-muted text-xs rounded-lg shadow border border-whatsapp-border flex items-center gap-1.5">
-                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> PIN Chat v1.5 • Aman & Realtime
+                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> PIN Chat v1.6 • Audio Notif & Grup Aktif
                 </span>
               </div>
 
@@ -1002,7 +1060,7 @@ export default function App() {
             <div className="w-20 h-20 bg-whatsapp-panel rounded-full flex items-center justify-center mb-4 border border-whatsapp-border shadow">
               <MessageSquare className="w-10 h-10 text-whatsapp-accent" />
             </div>
-            <h2 className="text-xl font-bold text-whatsapp-text mb-1">PIN Chat v1.5</h2>
+            <h2 className="text-xl font-bold text-whatsapp-text mb-1">PIN Chat v1.6</h2>
             <p className="text-sm max-w-sm">Pilih kontak atau grup di sebelah kiri untuk mulai mengobrol.</p>
           </div>
         )}
@@ -1069,7 +1127,10 @@ export default function App() {
               <div className="max-h-40 overflow-y-auto divide-y divide-whatsapp-border/40 bg-whatsapp-dark rounded-xl p-2">
                 {groupMembers.map(m => (
                   <div key={m.user_pin} className="py-2 px-2 flex items-center justify-between text-sm text-whatsapp-text">
-                    <span>{m.user_name || 'User'}</span>
+                    <span className="flex items-center gap-2">
+                      {m.avatar && <img src={m.avatar} alt="" className="w-6 h-6 rounded-full object-cover" />}
+                      {m.user_name || 'User'}
+                    </span>
                     <span className="text-xs font-mono text-whatsapp-accent">{m.user_pin}</span>
                   </div>
                 ))}
@@ -1101,8 +1162,8 @@ export default function App() {
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <h4 className="text-sm font-medium text-whatsapp-text">Notifikasi Pesan</h4>
-                  <p className="text-xs text-whatsapp-muted">Tampilkan notifikasi</p>
+                  <h4 className="text-sm font-medium text-whatsapp-text">Notifikasi Audio & Getar</h4>
+                  <p className="text-xs text-whatsapp-muted">Bunyikan suara saat pesan baru</p>
                 </div>
                 <input type="checkbox" checked={notificationsEnabled} onChange={(e) => updateSettings(e.target.checked, undefined, undefined)} className="w-5 h-5 accent-whatsapp-accent cursor-pointer" />
               </div>
