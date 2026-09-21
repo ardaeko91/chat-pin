@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   MessageSquare, UserPlus, LogOut, Send, Check, CheckCheck, 
   Search, Shield, Copy, CheckCircle2, ChevronLeft, Settings, 
-  Lock, Bell, Image as ImageIcon, Users, Plus, Camera, Trash2, Download
+  Lock, Bell, Image as ImageIcon, Users, Plus, Camera, Trash2, Download, Info
 } from 'lucide-react';
+import { App as CapApp } from '@capacitor/app';
 import { getSupabase } from './supabaseClient';
 
 export default function App() {
@@ -15,7 +16,7 @@ export default function App() {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
 
-  // App Lock state (safely initialized to prevent blank screen)
+  // App Lock state
   const [isLocked, setIsLocked] = useState(false);
   const [enterPasscode, setEnterPasscode] = useState('');
   const [lockError, setLockError] = useState('');
@@ -46,18 +47,43 @@ export default function App() {
   const [joinGroupId, setJoinGroupId] = useState('');
   const [groupError, setGroupError] = useState('');
 
+  const [showGroupInfo, setShowGroupInfo] = useState(false);
+  const [groupMembers, setGroupMembers] = useState([]);
+
   // Typing & Status
   const [typingUser, setTypingUser] = useState('');
-
   const [searchQuery, setSearchQuery] = useState('');
+
   const messagesEndRef = useRef(null);
   const typingTimeoutRef = useRef(null);
 
-  // Initialize session & app lock check safely
+  // Android Physical Back Button Handling
+  useEffect(() => {
+    const backListener = CapApp.addListener('backButton', ({ canGoBack }) => {
+      if (selectedContact || selectedGroup) {
+        setSelectedContact(null);
+        setSelectedGroup(null);
+        setShowGroupInfo(false);
+      } else if (showSettings || showAddModal || showGroupModal || showGroupInfo) {
+        setShowSettings(false);
+        setShowAddModal(false);
+        setShowGroupModal(false);
+        setShowGroupInfo(false);
+      } else {
+        CapApp.exitApp();
+      }
+    });
+
+    return () => {
+      backListener.then(listener => listener.remove());
+    };
+  }, [selectedContact, selectedGroup, showSettings, showAddModal, showGroupModal, showGroupInfo]);
+
+  // Initialize session & heartbeats
   useEffect(() => {
     try {
-      const savedUser = localStorage.getItem('schatpin_chat_user_v3');
-      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v3') || '{}');
+      const savedUser = localStorage.getItem('schatpin_chat_user_v4');
+      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v4') || '{}');
       
       if (settings.notificationsEnabled !== undefined) {
         setNotificationsEnabled(settings.notificationsEnabled);
@@ -82,6 +108,22 @@ export default function App() {
     }
   }, []);
 
+  // Presence heartbeat (update last_seen every 15s)
+  useEffect(() => {
+    if (!user) return;
+    const supabase = getSupabase();
+    const updatePresence = async () => {
+      await supabase
+        .from('schatpin_users')
+        .update({ last_seen: new Date().toISOString() })
+        .eq('pin', user.pin);
+    };
+
+    updatePresence();
+    const interval = setInterval(updatePresence, 15000);
+    return () => clearInterval(interval);
+  }, [user]);
+
   const verifyUser = async (pin) => {
     const supabase = getSupabase();
     try {
@@ -93,25 +135,24 @@ export default function App() {
 
       if (data && !error) {
         setUser(data);
-        localStorage.setItem('schatpin_chat_user_v3', JSON.stringify(data));
+        localStorage.setItem('schatpin_chat_user_v4', JSON.stringify(data));
       } else {
-        localStorage.removeItem('schatpin_chat_user_v3');
+        localStorage.removeItem('schatpin_chat_user_v4');
       }
     } catch (err) {
       console.error('Failed to verify user', err);
     }
   };
 
-  // Save settings safely
   const updateSettings = (newNotif, newLock, newPin) => {
     try {
-      const current = JSON.parse(localStorage.getItem('schatpin_settings_v3') || '{}');
+      const current = JSON.parse(localStorage.getItem('schatpin_settings_v4') || '{}');
       const settings = {
         notificationsEnabled: newNotif !== undefined ? newNotif : notificationsEnabled,
         appLockEnabled: newLock !== undefined ? newLock : appLockEnabled,
         passcode: newPin !== undefined ? newPin : (current.passcode || '')
       };
-      localStorage.setItem('schatpin_settings_v3', JSON.stringify(settings));
+      localStorage.setItem('schatpin_settings_v4', JSON.stringify(settings));
       setNotificationsEnabled(settings.notificationsEnabled);
       setAppLockEnabled(settings.appLockEnabled);
     } catch (e) {
@@ -122,7 +163,7 @@ export default function App() {
   const handleUnlock = (e) => {
     e.preventDefault();
     try {
-      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v3') || '{}');
+      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v4') || '{}');
       if (enterPasscode === settings.passcode) {
         setIsLocked(false);
         setEnterPasscode('');
@@ -163,10 +204,6 @@ export default function App() {
             if (newMsg.receiver_pin === user.pin) {
               markAsRead(newMsg.id);
             }
-          } else if (newMsg.receiver_pin === user.pin && notificationsEnabled) {
-            if (typeof window !== 'undefined' && 'Notification' in window && window.Notification.permission === 'granted') {
-              new window.Notification('Pesan Baru - PIN Chat', { body: newMsg.message });
-            }
           }
         }
       )
@@ -206,16 +243,12 @@ export default function App() {
       })
       .subscribe();
 
-    if (typeof window !== 'undefined' && 'Notification' in window && window.Notification.permission !== 'granted' && window.Notification.permission !== 'denied') {
-      window.Notification.requestPermission();
-    }
-
     return () => {
       supabase.removeChannel(msgChannel);
       supabase.removeChannel(groupMsgChannel);
       supabase.removeChannel(typingChannel);
     };
-  }, [user, selectedContact, selectedGroup, notificationsEnabled]);
+  }, [user, selectedContact, selectedGroup]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -225,6 +258,21 @@ export default function App() {
     const supabase = getSupabase();
     await supabase.from('schatpin_messages').update({ is_read: true }).eq('id', msgId);
   };
+
+  // When opening a chat with contact, mark unread messages as read
+  useEffect(() => {
+    if (!user || !selectedContact) return;
+    const markUnreadAsRead = async () => {
+      const supabase = getSupabase();
+      await supabase
+        .from('schatpin_messages')
+        .update({ is_read: true })
+        .eq('sender_pin', selectedContact.contact_pin)
+        .eq('receiver_pin', user.pin)
+        .eq('is_read', false);
+    };
+    markUnreadAsRead();
+  }, [user, selectedContact]);
 
   const generatePin = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -255,7 +303,7 @@ export default function App() {
         pin = generatePin();
         const { data, error } = await supabase
           .from('schatpin_users')
-          .insert([{ pin, name: inputName.trim(), password: inputPassword.trim(), avatar }])
+          .insert([{ pin, name: inputName.trim(), password: inputPassword.trim(), avatar, last_seen: new Date().toISOString() }])
           .select()
           .single();
 
@@ -268,7 +316,7 @@ export default function App() {
       }
 
       setUser(userData);
-      localStorage.setItem('schatpin_chat_user_v3', JSON.stringify(userData));
+      localStorage.setItem('schatpin_chat_user_v4', JSON.stringify(userData));
     } catch (err) {
       setError(err.message || 'Gagal mendaftar');
     }
@@ -300,14 +348,14 @@ export default function App() {
       }
 
       setUser(data);
-      localStorage.setItem('schatpin_chat_user_v3', JSON.stringify(data));
+      localStorage.setItem('schatpin_chat_user_v4', JSON.stringify(data));
     } catch (err) {
       setError(err.message);
     }
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('schatpin_chat_user_v3');
+    localStorage.removeItem('schatpin_chat_user_v4');
     setUser(null);
     setSelectedContact(null);
     setSelectedGroup(null);
@@ -332,7 +380,7 @@ export default function App() {
 
         if (!error && data) {
           setUser(data);
-          localStorage.setItem('schatpin_chat_user_v3', JSON.stringify(data));
+          localStorage.setItem('schatpin_chat_user_v4', JSON.stringify(data));
         }
       } catch (err) {
         console.error('Failed to update avatar', err);
@@ -360,7 +408,13 @@ export default function App() {
           .in('pin', contactPins);
 
         if (!userError && usersData) {
-          setContacts(usersData.map(u => ({ contact_pin: u.pin, ...u, online: true })));
+          const now = new Date().getTime();
+          setContacts(usersData.map(u => {
+            const lastSeenTime = u.last_seen ? new Date(u.last_seen).getTime() : 0;
+            // Online if last_seen within 35 seconds
+            const online = (now - lastSeenTime) < 35000;
+            return { contact_pin: u.pin, ...u, online };
+          }));
         }
       } else {
         setContacts([]);
@@ -474,7 +528,7 @@ export default function App() {
       try {
         const { data, error } = await supabase
           .from('schatpin_messages')
-          .insert([{ sender_pin: user.pin, receiver_pin: selectedContact.contact_pin, message: msgText }])
+          .insert([{ sender_pin: user.pin, receiver_pin: selectedContact.contact_pin, message: msgText, is_read: false }])
           .select()
           .single();
 
@@ -503,31 +557,54 @@ export default function App() {
     }
   };
 
+  // Compressed Image sending (solves payload size / silent fail issue)
   const handleImageSend = async (e) => {
     const file = e.target.files[0];
     if (!file || (!selectedContact && !selectedGroup)) return;
 
     const reader = new FileReader();
-    reader.onloadend = async () => {
-      const base64Img = reader.result;
-      const supabase = getSupabase();
-      const mediaNotice = "[Gambar dikirim - Auto-delete 24 Jam]";
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = async () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        const maxDim = 800;
 
-      if (selectedContact) {
-        const { data } = await supabase
-          .from('schatpin_messages')
-          .insert([{ sender_pin: user.pin, receiver_pin: selectedContact.contact_pin, message: mediaNotice, media_url: base64Img, media_type: 'image' }])
-          .select()
-          .single();
-        if (data) setMessages(prev => [...prev, data]);
-      } else if (selectedGroup) {
-        const { data } = await supabase
-          .from('schatpin_group_messages')
-          .insert([{ group_id: selectedGroup.group_id, sender_pin: user.pin, sender_name: user.name, message: mediaNotice, media_url: base64Img, media_type: 'image' }])
-          .select()
-          .single();
-        if (data) setGroupMessages(prev => [...prev, data]);
-      }
+        if (width > height && width > maxDim) {
+          height *= maxDim / width;
+          width = maxDim;
+        } else if (height > maxDim) {
+          width *= maxDim / height;
+          height = maxDim;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
+
+        const supabase = getSupabase();
+        const mediaNotice = "[Gambar dikirim - Auto-delete 24 Jam]";
+
+        if (selectedContact) {
+          const { data } = await supabase
+            .from('schatpin_messages')
+            .insert([{ sender_pin: user.pin, receiver_pin: selectedContact.contact_pin, message: mediaNotice, media_url: compressedBase64, media_type: 'image', is_read: false }])
+            .select()
+            .single();
+          if (data) setMessages(prev => [...prev, data]);
+        } else if (selectedGroup) {
+          const { data } = await supabase
+            .from('schatpin_group_messages')
+            .insert([{ group_id: selectedGroup.group_id, sender_pin: user.pin, sender_name: user.name, message: mediaNotice, media_url: compressedBase64, media_type: 'image' }])
+            .select()
+            .single();
+          if (data) setGroupMessages(prev => [...prev, data]);
+        }
+      };
+      img.src = event.target.result;
     };
     reader.readAsDataURL(file);
   };
@@ -576,7 +653,7 @@ export default function App() {
 
     try {
       await supabase.from('schatpin_groups').insert([{ group_id: gId, name: groupName.trim(), admin_pin: user.pin, avatar }]);
-      await supabase.from('schatpin_group_members').insert([{ group_id: gId, user_pin: user.pin }]);
+      await supabase.from('schatpin_group_members').insert([{ group_id: gId, user_pin: user.pin, user_name: user.name }]);
       await fetchGroups();
       setGroupName('');
       setShowGroupModal(false);
@@ -596,7 +673,7 @@ export default function App() {
       const { data: grp } = await supabase.from('schatpin_groups').select('*').eq('group_id', cleanGId).single();
       if (!grp) throw new Error('ID Grup tidak ditemukan!');
 
-      await supabase.from('schatpin_group_members').insert([{ group_id: cleanGId, user_pin: user.pin }]);
+      await supabase.from('schatpin_group_members').insert([{ group_id: cleanGId, user_pin: user.pin, user_name: user.name }]);
       await fetchGroups();
       setJoinGroupId('');
       setShowGroupModal(false);
@@ -605,13 +682,42 @@ export default function App() {
     }
   };
 
+  const fetchGroupMembers = async (groupId) => {
+    const supabase = getSupabase();
+    const { data } = await supabase
+      .from('schatpin_group_members')
+      .select('user_pin, user_name')
+      .eq('group_id', groupId);
+    if (data) setGroupMembers(data);
+    setShowGroupInfo(true);
+  };
+
+  const handleDeleteGroup = async (groupId) => {
+    if (!confirm('Yakin ingin menghapus grup ini?')) return;
+    const supabase = getSupabase();
+    await supabase.from('schatpin_groups').delete().eq('group_id', groupId);
+    await supabase.from('schatpin_group_members').delete().eq('group_id', groupId);
+    await supabase.from('schatpin_group_messages').delete().eq('group_id', groupId);
+    setSelectedGroup(null);
+    setShowGroupInfo(false);
+    await fetchGroups();
+  };
+
+  const handleLeaveGroup = async (groupId) => {
+    if (!confirm('Yakin ingin keluar dari grup ini?')) return;
+    const supabase = getSupabase();
+    await supabase.from('schatpin_group_members').delete().eq('group_id', groupId).eq('user_pin', user.pin);
+    setSelectedGroup(null);
+    setShowGroupInfo(false);
+    await fetchGroups();
+  };
+
   const copyPin = () => {
     navigator.clipboard.writeText(user.pin);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // App Lock Screen (Safely guarded)
   if (isLocked) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-whatsapp-chat p-4">
@@ -622,11 +728,7 @@ export default function App() {
           <h1 className="text-2xl font-bold text-whatsapp-text">Aplikasi Dikunci</h1>
           <p className="text-whatsapp-muted text-sm mt-1 mb-6">Masukkan PIN Keamanan untuk membuka aplikasi</p>
 
-          {lockError && (
-            <div className="mb-4 p-3 bg-red-900/50 border border-red-500 text-red-200 rounded-lg text-sm">
-              {lockError}
-            </div>
-          )}
+          {lockError && <div className="mb-4 p-3 bg-red-900/50 border border-red-500 text-red-200 rounded-lg text-sm">{lockError}</div>}
 
           <form onSubmit={handleUnlock} className="space-y-4">
             <input
@@ -638,19 +740,13 @@ export default function App() {
               className="w-full px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text text-center text-2xl tracking-widest focus:outline-none focus:border-whatsapp-accent transition"
               required
             />
-            <button
-              type="submit"
-              className="w-full py-3 bg-whatsapp-accent hover:bg-emerald-600 text-white font-medium rounded-xl shadow-lg transition"
-            >
-              Buka Kunci
-            </button>
+            <button type="submit" className="w-full py-3 bg-whatsapp-accent hover:bg-emerald-600 text-white font-medium rounded-xl shadow-lg transition">Buka Kunci</button>
           </form>
         </div>
       </div>
     );
   }
 
-  // Auth Screen (With Password security)
   if (!user) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-whatsapp-chat p-4">
@@ -659,94 +755,40 @@ export default function App() {
             <div className="inline-flex items-center justify-center w-16 h-16 bg-whatsapp-accent rounded-full text-white mb-4 shadow-lg">
               <Shield className="w-8 h-8" />
             </div>
-            <h1 className="text-2xl font-bold text-whatsapp-text">PIN Chat v1.3</h1>
-            <p className="text-whatsapp-muted text-sm mt-1">Chat aman dengan perlindungan kata sandi</p>
+            <h1 className="text-2xl font-bold text-whatsapp-text">PIN Chat v1.5</h1>
+            <p className="text-whatsapp-muted text-sm mt-1">Chat privat aman dengan fitur lengkap</p>
           </div>
 
           <div className="flex rounded-lg bg-whatsapp-dark p-1 mb-6 border border-whatsapp-border">
-            <button
-              type="button"
-              onClick={() => { setAuthMode('register'); setError(''); }}
-              className={`flex-1 py-2 text-sm font-medium rounded-md transition ${authMode === 'register' ? 'bg-whatsapp-accent text-white shadow' : 'text-whatsapp-muted hover:text-white'}`}
-            >
-              Buat PIN Baru
-            </button>
-            <button
-              type="button"
-              onClick={() => { setAuthMode('login'); setError(''); }}
-              className={`flex-1 py-2 text-sm font-medium rounded-md transition ${authMode === 'login' ? 'bg-whatsapp-accent text-white shadow' : 'text-whatsapp-muted hover:text-white'}`}
-            >
-              Masuk dengan PIN
-            </button>
+            <button type="button" onClick={() => { setAuthMode('register'); setError(''); }} className={`flex-1 py-2 text-sm font-medium rounded-md transition ${authMode === 'register' ? 'bg-whatsapp-accent text-white shadow' : 'text-whatsapp-muted hover:text-white'}`}>Buat PIN Baru</button>
+            <button type="button" onClick={() => { setAuthMode('login'); setError(''); }} className={`flex-1 py-2 text-sm font-medium rounded-md transition ${authMode === 'login' ? 'bg-whatsapp-accent text-white shadow' : 'text-whatsapp-muted hover:text-white'}`}>Masuk dengan PIN</button>
           </div>
 
-          {error && (
-            <div className="mb-4 p-3 bg-red-900/50 border border-red-500 text-red-200 rounded-lg text-sm text-center">
-              {error}
-            </div>
-          )}
+          {error && <div className="mb-4 p-3 bg-red-900/50 border border-red-500 text-red-200 rounded-lg text-sm text-center">{error}</div>}
 
           {authMode === 'register' ? (
             <form onSubmit={handleRegister} className="space-y-4">
               <div>
                 <label className="block text-xs font-medium text-whatsapp-muted mb-1 uppercase tracking-wider">Nama Kamu</label>
-                <input
-                  type="text"
-                  value={inputName}
-                  onChange={(e) => setInputName(e.target.value)}
-                  placeholder="Contoh: Arda Eko"
-                  className="w-full px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text focus:outline-none focus:border-whatsapp-accent transition"
-                  required
-                />
+                <input type="text" value={inputName} onChange={(e) => setInputName(e.target.value)} placeholder="Contoh: Arda Eko" className="w-full px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text focus:outline-none focus:border-whatsapp-accent transition" required />
               </div>
               <div>
                 <label className="block text-xs font-medium text-whatsapp-muted mb-1 uppercase tracking-wider">Kata Sandi Rahasia</label>
-                <input
-                  type="password"
-                  value={inputPassword}
-                  onChange={(e) => setInputPassword(e.target.value)}
-                  placeholder="Kata sandi untuk mengamankan PIN"
-                  className="w-full px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text focus:outline-none focus:border-whatsapp-accent transition"
-                  required
-                />
+                <input type="password" value={inputPassword} onChange={(e) => setInputPassword(e.target.value)} placeholder="Kata sandi akun" className="w-full px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text focus:outline-none focus:border-whatsapp-accent transition" required />
               </div>
-              <button
-                type="submit"
-                className="w-full py-3 bg-whatsapp-accent hover:bg-emerald-600 text-white font-medium rounded-xl shadow-lg transition flex items-center justify-center gap-2"
-              >
-                Buat PIN & Masuk
-              </button>
+              <button type="submit" className="w-full py-3 bg-whatsapp-accent hover:bg-emerald-600 text-white font-medium rounded-xl shadow-lg transition flex items-center justify-center gap-2">Buat PIN & Masuk</button>
             </form>
           ) : (
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
                 <label className="block text-xs font-medium text-whatsapp-muted mb-1 uppercase tracking-wider">PIN Kamu</label>
-                <input
-                  type="text"
-                  value={inputPin}
-                  onChange={(e) => setInputPin(e.target.value)}
-                  placeholder="Contoh: PIN7A8B2"
-                  className="w-full px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text uppercase font-mono tracking-widest focus:outline-none focus:border-whatsapp-accent transition"
-                  required
-                />
+                <input type="text" value={inputPin} onChange={(e) => setInputPin(e.target.value)} placeholder="Contoh: PIN7A8B2" className="w-full px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text uppercase font-mono tracking-widest focus:outline-none focus:border-whatsapp-accent transition" required />
               </div>
               <div>
                 <label className="block text-xs font-medium text-whatsapp-muted mb-1 uppercase tracking-wider">Kata Sandi</label>
-                <input
-                  type="password"
-                  value={inputPassword}
-                  onChange={(e) => setInputPassword(e.target.value)}
-                  placeholder="Kata sandi akun kamu"
-                  className="w-full px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text focus:outline-none focus:border-whatsapp-accent transition"
-                  required
-                />
+                <input type="password" value={inputPassword} onChange={(e) => setInputPassword(e.target.value)} placeholder="Kata sandi akun" className="w-full px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text focus:outline-none focus:border-whatsapp-accent transition" required />
               </div>
-              <button
-                type="submit"
-                className="w-full py-3 bg-whatsapp-accent hover:bg-emerald-600 text-white font-medium rounded-xl shadow-lg transition flex items-center justify-center gap-2"
-              >
-                Masuk Chat
-              </button>
+              <button type="submit" className="w-full py-3 bg-whatsapp-accent hover:bg-emerald-600 text-white font-medium rounded-xl shadow-lg transition flex items-center justify-center gap-2">Masuk Chat</button>
             </form>
           )}
         </div>
@@ -813,13 +855,16 @@ export default function App() {
             ) : (
               filteredContacts.map(contact => (
                 <div key={contact.contact_pin} onClick={() => { setSelectedContact(contact); setSelectedGroup(null); }} className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition hover:bg-whatsapp-dark/60 ${selectedContact?.contact_pin === contact.contact_pin ? 'bg-whatsapp-dark/80' : ''}`}>
-                  <img src={contact.avatar} alt={contact.name} className="w-12 h-12 rounded-full bg-whatsapp-dark border border-whatsapp-border object-cover" />
+                  <div className="relative">
+                    <img src={contact.avatar} alt={contact.name} className="w-12 h-12 rounded-full bg-whatsapp-dark border border-whatsapp-border object-cover" />
+                    {contact.online && <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-whatsapp-green border-2 border-whatsapp-panel rounded-full" />}
+                  </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-0.5">
                       <h3 className="font-semibold text-whatsapp-text text-sm truncate">{contact.name}</h3>
                       <span className="text-xs text-whatsapp-muted font-mono">{contact.contact_pin}</span>
                     </div>
-                    <p className="text-xs text-whatsapp-muted truncate">Online</p>
+                    <p className="text-xs text-whatsapp-muted truncate">{contact.online ? 'Online' : 'Offline'}</p>
                   </div>
                 </div>
               ))
@@ -855,23 +900,28 @@ export default function App() {
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 bg-whatsapp-panel border-b border-whatsapp-border shadow-sm">
               <div className="flex items-center gap-3">
-                <button onClick={() => { setSelectedContact(null); setSelectedGroup(null); }} className="md:hidden p-1.5 text-whatsapp-muted hover:text-white rounded-full transition"><ChevronLeft className="w-6 h-6" /></button>
+                <button onClick={() => { setSelectedContact(null); setSelectedGroup(null); setShowGroupInfo(false); }} className="md:hidden p-1.5 text-whatsapp-muted hover:text-white rounded-full transition"><ChevronLeft className="w-6 h-6" /></button>
                 <img src={selectedContact ? selectedContact.avatar : selectedGroup.avatar} alt="Avatar" className="w-10 h-10 rounded-full bg-whatsapp-dark border border-whatsapp-border object-cover" />
                 <div>
                   <h3 className="font-semibold text-whatsapp-text text-sm">{selectedContact ? selectedContact.name : selectedGroup.name}</h3>
                   <p className="text-xs text-whatsapp-muted font-mono">
-                    {selectedContact ? `PIN: ${selectedContact.contact_pin}` : `ID Grup: ${selectedGroup.group_id}`}
+                    {selectedContact ? `PIN: ${selectedContact.contact_pin} • ${selectedContact.online ? 'Online' : 'Offline'}` : `ID Grup: ${selectedGroup.group_id}`}
                     {typingUser && <span className="text-whatsapp-accent ml-2 italic">({typingUser} sedang mengetik...)</span>}
                   </p>
                 </div>
               </div>
+              {selectedGroup && (
+                <button onClick={() => fetchGroupMembers(selectedGroup.group_id)} className="p-2 text-whatsapp-muted hover:text-white rounded-full transition" title="Info Grup">
+                  <Info className="w-5 h-5" />
+                </button>
+              )}
             </div>
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[radial-gradient(#202c33_1px,transparent_1px)] bg-[size:16px_16px]">
               <div className="flex justify-center my-2">
                 <span className="px-3 py-1 bg-whatsapp-panel text-whatsapp-muted text-xs rounded-lg shadow border border-whatsapp-border flex items-center gap-1.5">
-                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> PIN Chat v1.3 • Dilindungi Sandi Rahasia
+                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> PIN Chat v1.5 • Aman & Realtime
                 </span>
               </div>
 
@@ -952,7 +1002,7 @@ export default function App() {
             <div className="w-20 h-20 bg-whatsapp-panel rounded-full flex items-center justify-center mb-4 border border-whatsapp-border shadow">
               <MessageSquare className="w-10 h-10 text-whatsapp-accent" />
             </div>
-            <h2 className="text-xl font-bold text-whatsapp-text mb-1">PIN Chat v1.3</h2>
+            <h2 className="text-xl font-bold text-whatsapp-text mb-1">PIN Chat v1.5</h2>
             <p className="text-sm max-w-sm">Pilih kontak atau grup di sebelah kiri untuk mulai mengobrol.</p>
           </div>
         )}
@@ -1004,6 +1054,44 @@ export default function App() {
         </div>
       )}
 
+      {/* Group Info Modal */}
+      {showGroupInfo && selectedGroup && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="w-full max-w-md bg-whatsapp-panel border border-whatsapp-border rounded-2xl shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-whatsapp-text">Info Grup: {selectedGroup.name}</h3>
+              <button onClick={() => setShowGroupInfo(false)} className="text-whatsapp-muted hover:text-white">✕</button>
+            </div>
+            <p className="text-xs text-whatsapp-muted font-mono">ID Grup: {selectedGroup.group_id}</p>
+            
+            <div>
+              <h4 className="text-xs font-semibold text-whatsapp-muted uppercase tracking-wider mb-2">Anggota Bergabung ({groupMembers.length})</h4>
+              <div className="max-h-40 overflow-y-auto divide-y divide-whatsapp-border/40 bg-whatsapp-dark rounded-xl p-2">
+                {groupMembers.map(m => (
+                  <div key={m.user_pin} className="py-2 px-2 flex items-center justify-between text-sm text-whatsapp-text">
+                    <span>{m.user_name || 'User'}</span>
+                    <span className="text-xs font-mono text-whatsapp-accent">{m.user_pin}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="pt-2 flex items-center justify-between">
+              {selectedGroup.admin_pin === user.pin ? (
+                <button onClick={() => handleDeleteGroup(selectedGroup.group_id)} className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition flex items-center gap-1">
+                  <Trash2 className="w-4 h-4" /> Hapus Grup
+                </button>
+              ) : (
+                <button onClick={() => handleLeaveGroup(selectedGroup.group_id)} className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition flex items-center gap-1">
+                  <LogOut className="w-4 h-4" /> Keluar Grup
+                </button>
+              )}
+              <button onClick={() => setShowGroupInfo(false)} className="px-4 py-2 rounded-xl bg-whatsapp-dark text-whatsapp-muted hover:text-white text-sm transition">Tutup</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Settings Modal */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -1014,14 +1102,9 @@ export default function App() {
               <div className="flex items-center justify-between">
                 <div>
                   <h4 className="text-sm font-medium text-whatsapp-text">Notifikasi Pesan</h4>
-                  <p className="text-xs text-whatsapp-muted">Tampilkan notifikasi browser</p>
+                  <p className="text-xs text-whatsapp-muted">Tampilkan notifikasi</p>
                 </div>
-                <input
-                  type="checkbox"
-                  checked={notificationsEnabled}
-                  onChange={(e) => updateSettings(e.target.checked, undefined, undefined)}
-                  className="w-5 h-5 accent-whatsapp-accent cursor-pointer"
-                />
+                <input type="checkbox" checked={notificationsEnabled} onChange={(e) => updateSettings(e.target.checked, undefined, undefined)} className="w-5 h-5 accent-whatsapp-accent cursor-pointer" />
               </div>
 
               <div className="border-t border-whatsapp-border pt-4">
@@ -1030,31 +1113,12 @@ export default function App() {
                     <h4 className="text-sm font-medium text-whatsapp-text">Kunci Keamanan App (PIN)</h4>
                     <p className="text-xs text-whatsapp-muted">Lindungi aplikasi dengan PIN sandi</p>
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={appLockEnabled}
-                    onChange={(e) => {
-                      const enabled = e.target.checked;
-                      if (!enabled) updateSettings(undefined, false, '');
-                      else updateSettings(undefined, true, newPasscode || '1234');
-                    }}
-                    className="w-5 h-5 accent-whatsapp-accent cursor-pointer"
-                  />
+                  <input type="checkbox" checked={appLockEnabled} onChange={(e) => { const enabled = e.target.checked; if (!enabled) updateSettings(undefined, false, ''); else updateSettings(undefined, true, newPasscode || '1234'); }} className="w-5 h-5 accent-whatsapp-accent cursor-pointer" />
                 </div>
                 {appLockEnabled && (
                   <div>
                     <label className="block text-xs text-whatsapp-muted mb-1">Set PIN Keamanan Baru (4-6 digit)</label>
-                    <input
-                      type="password"
-                      maxLength={6}
-                      value={newPasscode}
-                      onChange={(e) => {
-                        setNewPasscode(e.target.value);
-                        updateSettings(undefined, true, e.target.value);
-                      }}
-                      placeholder="Contoh: 1234"
-                      className="w-full px-3 py-2 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text text-sm focus:outline-none focus:border-whatsapp-accent"
-                    />
+                    <input type="password" maxLength={6} value={newPasscode} onChange={(e) => { setNewPasscode(e.target.value); updateSettings(undefined, true, e.target.value); }} placeholder="Contoh: 1234" className="w-full px-3 py-2 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text text-sm focus:outline-none focus:border-whatsapp-accent" />
                   </div>
                 )}
               </div>

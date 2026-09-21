@@ -1,6 +1,6 @@
--- PIN Chat v2.1 Supabase Schema (Password & App Lock security)
+-- PIN Chat v2.2 Supabase Schema (Media storage, group admin, members, presence)
 
--- 1. Users Table (with password column)
+-- 1. Users Table
 CREATE TABLE IF NOT EXISTS schatpin_users (
     id SERIAL PRIMARY KEY,
     pin TEXT UNIQUE NOT NULL,
@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS schatpin_users (
     password TEXT NOT NULL,
     avatar TEXT,
     status TEXT DEFAULT 'Available',
+    last_seen TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
@@ -47,6 +48,7 @@ CREATE TABLE IF NOT EXISTS schatpin_group_members (
     id SERIAL PRIMARY KEY,
     group_id TEXT NOT NULL,
     user_pin TEXT NOT NULL,
+    user_name TEXT,
     joined_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
     UNIQUE(group_id, user_pin)
 );
@@ -81,3 +83,4 @@ CREATE POLICY "Allow all group messages" ON schatpin_group_messages FOR ALL USIN
 -- Enable Realtime
 ALTER PUBLICATION supabase_realtime ADD TABLE schatpin_messages;
 ALTER PUBLICATION supabase_realtime ADD TABLE schatpin_group_messages;
+ALTER PUBLICATION supabase_realtime ADD TABLE schatpin_users;
