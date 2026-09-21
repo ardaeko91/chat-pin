@@ -10,13 +10,13 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [authMode, setAuthMode] = useState('register');
   const [inputName, setInputName] = useState('');
+  const [inputPassword, setInputPassword] = useState('');
   const [inputPin, setInputPin] = useState('');
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
 
-  // App Lock state
+  // App Lock state (safely initialized to prevent blank screen)
   const [isLocked, setIsLocked] = useState(false);
-  const [passcode, setPasscode] = useState('');
   const [enterPasscode, setEnterPasscode] = useState('');
   const [lockError, setLockError] = useState('');
 
@@ -47,28 +47,38 @@ export default function App() {
   const [groupError, setGroupError] = useState('');
 
   // Typing & Status
-  const [isTyping, setIsTyping] = useState(false);
   const [typingUser, setTypingUser] = useState('');
 
   const [searchQuery, setSearchQuery] = useState('');
   const messagesEndRef = useRef(null);
   const typingTimeoutRef = useRef(null);
 
-  // Initialize session & app lock check
+  // Initialize session & app lock check safely
   useEffect(() => {
-    const savedUser = localStorage.getItem('schatpin_chat_user_v2');
-    const settings = JSON.parse(localStorage.getItem('schatpin_settings') || '{}');
-    if (settings.notificationsEnabled !== undefined) setNotificationsEnabled(settings.notificationsEnabled);
-    if (settings.appLockEnabled !== undefined) {
-      setAppLockEnabled(settings.appLockEnabled);
-      if (settings.appLockEnabled && settings.passcode) {
-        setIsLocked(true);
+    try {
+      const savedUser = localStorage.getItem('schatpin_chat_user_v3');
+      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v3') || '{}');
+      
+      if (settings.notificationsEnabled !== undefined) {
+        setNotificationsEnabled(settings.notificationsEnabled);
       }
-    }
+      
+      if (settings.appLockEnabled && settings.passcode) {
+        setAppLockEnabled(true);
+        setIsLocked(true);
+      } else {
+        setIsLocked(false);
+      }
 
-    if (savedUser) {
-      const userData = JSON.parse(savedUser);
-      verifyUser(userData.pin);
+      if (savedUser) {
+        const userData = JSON.parse(savedUser);
+        if (userData && userData.pin) {
+          verifyUser(userData.pin);
+        }
+      }
+    } catch (e) {
+      console.error('Initialization error:', e);
+      setIsLocked(false);
     }
   }, []);
 
@@ -83,36 +93,45 @@ export default function App() {
 
       if (data && !error) {
         setUser(data);
-        localStorage.setItem('schatpin_chat_user_v2', JSON.stringify(data));
+        localStorage.setItem('schatpin_chat_user_v3', JSON.stringify(data));
       } else {
-        localStorage.removeItem('schatpin_chat_user_v2');
+        localStorage.removeItem('schatpin_chat_user_v3');
       }
     } catch (err) {
       console.error('Failed to verify user', err);
     }
   };
 
-  // Save settings
+  // Save settings safely
   const updateSettings = (newNotif, newLock, newPin) => {
-    const settings = {
-      notificationsEnabled: newNotif !== undefined ? newNotif : notificationsEnabled,
-      appLockEnabled: newLock !== undefined ? newLock : appLockEnabled,
-      passcode: newPin || JSON.parse(localStorage.getItem('schatpin_settings') || '{}').passcode || ''
-    };
-    localStorage.setItem('schatpin_settings', JSON.stringify(settings));
-    setNotificationsEnabled(settings.notificationsEnabled);
-    setAppLockEnabled(settings.appLockEnabled);
+    try {
+      const current = JSON.parse(localStorage.getItem('schatpin_settings_v3') || '{}');
+      const settings = {
+        notificationsEnabled: newNotif !== undefined ? newNotif : notificationsEnabled,
+        appLockEnabled: newLock !== undefined ? newLock : appLockEnabled,
+        passcode: newPin !== undefined ? newPin : (current.passcode || '')
+      };
+      localStorage.setItem('schatpin_settings_v3', JSON.stringify(settings));
+      setNotificationsEnabled(settings.notificationsEnabled);
+      setAppLockEnabled(settings.appLockEnabled);
+    } catch (e) {
+      console.error('Save settings error:', e);
+    }
   };
 
   const handleUnlock = (e) => {
     e.preventDefault();
-    const settings = JSON.parse(localStorage.getItem('schatpin_settings') || '{}');
-    if (enterPasscode === settings.passcode) {
+    try {
+      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v3') || '{}');
+      if (enterPasscode === settings.passcode) {
+        setIsLocked(false);
+        setEnterPasscode('');
+        setLockError('');
+      } else {
+        setLockError('PIN Keamanan salah!');
+      }
+    } catch (e) {
       setIsLocked(false);
-      setEnterPasscode('');
-      setLockError('');
-    } else {
-      setLockError('PIN Keamanan salah!');
     }
   };
 
@@ -124,7 +143,6 @@ export default function App() {
     fetchContacts();
     fetchGroups();
 
-    // Messages Realtime
     const msgChannel = supabase
       .channel('public:schatpin_messages')
       .on(
@@ -142,12 +160,10 @@ export default function App() {
               if (!exists) return [...prev, newMsg];
               return prev;
             });
-            // Mark as read if receiving
             if (newMsg.receiver_pin === user.pin) {
               markAsRead(newMsg.id);
             }
           } else if (newMsg.receiver_pin === user.pin && notificationsEnabled) {
-            // Show browser notification if enabled
             if (Notification.permission === 'granted') {
               new Notification('Pesan Baru - PIN Chat', { body: newMsg.message });
             }
@@ -164,7 +180,6 @@ export default function App() {
       )
       .subscribe();
 
-    // Group Messages Realtime
     const groupMsgChannel = supabase
       .channel('public:schatpin_group_messages')
       .on(
@@ -183,7 +198,6 @@ export default function App() {
       )
       .subscribe();
 
-    // Typing Indicator Broadcast
     const typingChannel = supabase.channel('room:typing')
       .on('broadcast', { event: 'typing' }, ({ payload }) => {
         if (selectedContact && payload.sender_pin === selectedContact.contact_pin && payload.receiver_pin === user.pin) {
@@ -224,8 +238,8 @@ export default function App() {
   const handleRegister = async (e) => {
     e.preventDefault();
     setError('');
-    if (!inputName.trim()) {
-      setError('Nama harus diisi');
+    if (!inputName.trim() || !inputPassword.trim()) {
+      setError('Nama dan Kata Sandi wajib diisi');
       return;
     }
 
@@ -241,7 +255,7 @@ export default function App() {
         pin = generatePin();
         const { data, error } = await supabase
           .from('schatpin_users')
-          .insert([{ pin, name: inputName.trim(), avatar }])
+          .insert([{ pin, name: inputName.trim(), password: inputPassword.trim(), avatar }])
           .select()
           .single();
 
@@ -254,7 +268,7 @@ export default function App() {
       }
 
       setUser(userData);
-      localStorage.setItem('schatpin_chat_user_v2', JSON.stringify(userData));
+      localStorage.setItem('schatpin_chat_user_v3', JSON.stringify(userData));
     } catch (err) {
       setError(err.message || 'Gagal mendaftar');
     }
@@ -263,8 +277,8 @@ export default function App() {
   const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
-    if (!inputPin.trim()) {
-      setError('PIN harus diisi');
+    if (!inputPin.trim() || !inputPassword.trim()) {
+      setError('PIN dan Kata Sandi wajib diisi');
       return;
     }
 
@@ -281,22 +295,25 @@ export default function App() {
         throw new Error('PIN tidak ditemukan!');
       }
 
+      if (data.password !== inputPassword.trim()) {
+        throw new Error('Kata sandi salah!');
+      }
+
       setUser(data);
-      localStorage.setItem('schatpin_chat_user_v2', JSON.stringify(data));
+      localStorage.setItem('schatpin_chat_user_v3', JSON.stringify(data));
     } catch (err) {
       setError(err.message);
     }
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('schatpin_chat_user_v2');
+    localStorage.removeItem('schatpin_chat_user_v3');
     setUser(null);
     setSelectedContact(null);
     setSelectedGroup(null);
     setMessages([]);
   };
 
-  // Profile Picture Upload
   const handleAvatarUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -315,7 +332,7 @@ export default function App() {
 
         if (!error && data) {
           setUser(data);
-          localStorage.setItem('schatpin_chat_user_v2', JSON.stringify(data));
+          localStorage.setItem('schatpin_chat_user_v3', JSON.stringify(data));
         }
       } catch (err) {
         console.error('Failed to update avatar', err);
@@ -324,7 +341,6 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
-  // Fetch Contacts & Groups
   const fetchContacts = async () => {
     if (!user) return;
     const supabase = getSupabase();
@@ -380,7 +396,6 @@ export default function App() {
     }
   };
 
-  // Fetch Messages
   const fetchMessages = async () => {
     if (!user || !selectedContact) return;
     const supabase = getSupabase();
@@ -425,7 +440,6 @@ export default function App() {
     if (selectedGroup) fetchGroupMessages();
   }, [selectedGroup]);
 
-  // Typing Broadcast Handler
   const handleTypingInput = (e) => {
     setMessageInput(e.target.value);
     if (!selectedContact) return;
@@ -448,14 +462,13 @@ export default function App() {
     }, 2000);
   };
 
-  // Send Message with Auto-delete Media Notice
   const sendMessage = async (e) => {
     e.preventDefault();
     if (!messageInput.trim() || (!selectedContact && !selectedGroup)) return;
 
     const supabase = getSupabase();
     const msgText = messageInput.trim();
-    setMessageInput();
+    setMessageInput('');
 
     if (selectedContact) {
       try {
@@ -490,7 +503,6 @@ export default function App() {
     }
   };
 
-  // Send Image (Auto-delete after 24 hours concept)
   const handleImageSend = async (e) => {
     const file = e.target.files[0];
     if (!file || (!selectedContact && !selectedGroup)) return;
@@ -554,7 +566,6 @@ export default function App() {
     }
   };
 
-  // Group creation & joining
   const handleCreateGroup = async (e) => {
     e.preventDefault();
     if (!groupName.trim()) return;
@@ -600,7 +611,7 @@ export default function App() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // App Lock Screen
+  // App Lock Screen (Safely guarded)
   if (isLocked) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-whatsapp-chat p-4">
@@ -639,7 +650,7 @@ export default function App() {
     );
   }
 
-  // Auth Screen
+  // Auth Screen (With Password security)
   if (!user) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-whatsapp-chat p-4">
@@ -648,8 +659,8 @@ export default function App() {
             <div className="inline-flex items-center justify-center w-16 h-16 bg-whatsapp-accent rounded-full text-white mb-4 shadow-lg">
               <Shield className="w-8 h-8" />
             </div>
-            <h1 className="text-2xl font-bold text-whatsapp-text">PIN Chat v2.0</h1>
-            <p className="text-whatsapp-muted text-sm mt-1">Chat privat aman dengan fitur lengkap</p>
+            <h1 className="text-2xl font-bold text-whatsapp-text">PIN Chat v1.3</h1>
+            <p className="text-whatsapp-muted text-sm mt-1">Chat aman dengan perlindungan kata sandi</p>
           </div>
 
           <div className="flex rounded-lg bg-whatsapp-dark p-1 mb-6 border border-whatsapp-border">
@@ -688,6 +699,17 @@ export default function App() {
                   required
                 />
               </div>
+              <div>
+                <label className="block text-xs font-medium text-whatsapp-muted mb-1 uppercase tracking-wider">Kata Sandi Rahasia</label>
+                <input
+                  type="password"
+                  value={inputPassword}
+                  onChange={(e) => setInputPassword(e.target.value)}
+                  placeholder="Kata sandi untuk mengamankan PIN"
+                  className="w-full px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text focus:outline-none focus:border-whatsapp-accent transition"
+                  required
+                />
+              </div>
               <button
                 type="submit"
                 className="w-full py-3 bg-whatsapp-accent hover:bg-emerald-600 text-white font-medium rounded-xl shadow-lg transition flex items-center justify-center gap-2"
@@ -705,6 +727,17 @@ export default function App() {
                   onChange={(e) => setInputPin(e.target.value)}
                   placeholder="Contoh: PIN7A8B2"
                   className="w-full px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text uppercase font-mono tracking-widest focus:outline-none focus:border-whatsapp-accent transition"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-whatsapp-muted mb-1 uppercase tracking-wider">Kata Sandi</label>
+                <input
+                  type="password"
+                  value={inputPassword}
+                  onChange={(e) => setInputPassword(e.target.value)}
+                  placeholder="Kata sandi akun kamu"
+                  className="w-full px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text focus:outline-none focus:border-whatsapp-accent transition"
                   required
                 />
               </div>
@@ -838,7 +871,7 @@ export default function App() {
             <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[radial-gradient(#202c33_1px,transparent_1px)] bg-[size:16px_16px]">
               <div className="flex justify-center my-2">
                 <span className="px-3 py-1 bg-whatsapp-panel text-whatsapp-muted text-xs rounded-lg shadow border border-whatsapp-border flex items-center gap-1.5">
-                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> PIN Chat v2.0 • Auto-delete media 24 Jam
+                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> PIN Chat v1.3 • Dilindungi Sandi Rahasia
                 </span>
               </div>
 
@@ -919,7 +952,7 @@ export default function App() {
             <div className="w-20 h-20 bg-whatsapp-panel rounded-full flex items-center justify-center mb-4 border border-whatsapp-border shadow">
               <MessageSquare className="w-10 h-10 text-whatsapp-accent" />
             </div>
-            <h2 className="text-xl font-bold text-whatsapp-text mb-1">PIN Chat v2.0</h2>
+            <h2 className="text-xl font-bold text-whatsapp-text mb-1">PIN Chat v1.3</h2>
             <p className="text-sm max-w-sm">Pilih kontak atau grup di sebelah kiri untuk mulai mengobrol.</p>
           </div>
         )}

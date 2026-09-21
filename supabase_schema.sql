@@ -1,10 +1,11 @@
--- PIN Chat v2.0 Comprehensive Supabase Schema
+-- PIN Chat v2.1 Supabase Schema (Password & App Lock security)
 
--- 1. Users Table
+-- 1. Users Table (with password column)
 CREATE TABLE IF NOT EXISTS schatpin_users (
     id SERIAL PRIMARY KEY,
     pin TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
+    password TEXT NOT NULL,
     avatar TEXT,
     status TEXT DEFAULT 'Available',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
@@ -19,14 +20,14 @@ CREATE TABLE IF NOT EXISTS schatpin_contacts (
     UNIQUE(user_pin, contact_pin)
 );
 
--- 3. Messages Table (with read receipts and image support)
+-- 3. Messages Table
 CREATE TABLE IF NOT EXISTS schatpin_messages (
     id SERIAL PRIMARY KEY,
     sender_pin TEXT NOT NULL,
     receiver_pin TEXT NOT NULL,
     message TEXT NOT NULL,
     media_url TEXT,
-    media_type TEXT, -- 'image', etc.
+    media_type TEXT,
     timestamp TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
     is_read BOOLEAN DEFAULT FALSE
 );
@@ -69,7 +70,7 @@ ALTER TABLE schatpin_groups ENABLE ROW LEVEL SECURITY;
 ALTER TABLE schatpin_group_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE schatpin_group_messages ENABLE ROW LEVEL SECURITY;
 
--- Permissive policies for prototype
+-- Permissive policies
 CREATE POLICY "Allow all users" ON schatpin_users FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all contacts" ON schatpin_contacts FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all messages" ON schatpin_messages FOR ALL USING (true) WITH CHECK (true);
