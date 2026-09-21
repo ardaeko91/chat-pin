@@ -82,8 +82,8 @@ export default function App() {
   // Initialize session
   useEffect(() => {
     try {
-      const savedUser = localStorage.getItem('schatpin_chat_user_v5');
-      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v5') || '{}');
+      const savedUser = localStorage.getItem('schatpin_chat_user_v7');
+      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v7') || '{}');
       
       if (settings.notificationsEnabled !== undefined) {
         setNotificationsEnabled(settings.notificationsEnabled);
@@ -135,9 +135,9 @@ export default function App() {
 
       if (data && !error) {
         setUser(data);
-        localStorage.setItem('schatpin_chat_user_v5', JSON.stringify(data));
+        localStorage.setItem('schatpin_chat_user_v7', JSON.stringify(data));
       } else {
-        localStorage.removeItem('schatpin_chat_user_v5');
+        localStorage.removeItem('schatpin_chat_user_v7');
       }
     } catch (err) {
       console.error('Failed to verify user', err);
@@ -146,13 +146,13 @@ export default function App() {
 
   const updateSettings = (newNotif, newLock, newPin) => {
     try {
-      const current = JSON.parse(localStorage.getItem('schatpin_settings_v5') || '{}');
+      const current = JSON.parse(localStorage.getItem('schatpin_settings_v7') || '{}');
       const settings = {
         notificationsEnabled: newNotif !== undefined ? newNotif : notificationsEnabled,
         appLockEnabled: newLock !== undefined ? newLock : appLockEnabled,
         passcode: newPin !== undefined ? newPin : (current.passcode || '')
       };
-      localStorage.setItem('schatpin_settings_v5', JSON.stringify(settings));
+      localStorage.setItem('schatpin_settings_v7', JSON.stringify(settings));
       setNotificationsEnabled(settings.notificationsEnabled);
       setAppLockEnabled(settings.appLockEnabled);
     } catch (e) {
@@ -163,7 +163,7 @@ export default function App() {
   const handleUnlock = (e) => {
     e.preventDefault();
     try {
-      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v5') || '{}');
+      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v7') || '{}');
       if (enterPasscode === settings.passcode) {
         setIsLocked(false);
         setEnterPasscode('');
@@ -186,12 +186,12 @@ export default function App() {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(659.25, ctx.currentTime); // E5
-      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      osc.frequency.setValueAtTime(783.99, ctx.currentTime); // G5
+      gain.gain.setValueAtTime(0.2, ctx.currentTime);
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start();
-      osc.stop(ctx.currentTime + 0.2);
+      osc.stop(ctx.currentTime + 0.25);
     } catch (e) {
       // Audio context policy
     }
@@ -206,7 +206,7 @@ export default function App() {
     fetchGroups();
 
     const msgChannel = supabase
-      .channel('public:schatpin_messages')
+      .channel('public:schatpin_messages_v7')
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'schatpin_messages' },
@@ -227,7 +227,10 @@ export default function App() {
               playNotificationSound();
             }
           } else if (newMsg.receiver_pin === user.pin) {
-            playNotificationSideEffect(newMsg);
+            playNotificationSound();
+            if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+              new Notification('Pesan Baru - PIN Chat v1.7', { body: newMsg.message });
+            }
           }
         }
       )
@@ -242,7 +245,7 @@ export default function App() {
       .subscribe();
 
     const groupMsgChannel = supabase
-      .channel('public:schatpin_group_messages')
+      .channel('public:schatpin_group_messages_v7')
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'schatpin_group_messages' },
@@ -262,7 +265,7 @@ export default function App() {
       )
       .subscribe();
 
-    const typingChannel = supabase.channel('room:typing')
+    const typingChannel = supabase.channel('room:typing_v7')
       .on('broadcast', { event: 'typing' }, ({ payload }) => {
         if (selectedContact && payload.sender_pin === selectedContact.contact_pin && payload.receiver_pin === user.pin) {
           setTypingUser(payload.isTyping ? selectedContact.name : '');
@@ -282,13 +285,6 @@ export default function App() {
     };
   }, [user, selectedContact, selectedGroup, notificationsEnabled]);
 
-  const playNotificationSideEffect = (msg) => {
-    playNotificationSound();
-    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-      new Notification('Pesan Baru - PIN Chat', { body: msg.message });
-    }
-  };
-
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, groupMessages]);
@@ -298,6 +294,7 @@ export default function App() {
     await supabase.from('schatpin_messages').update({ is_read: true }).eq('id', msgId);
   };
 
+  // Mark all unread messages from selectedContact as read instantly
   useEffect(() => {
     if (!user || !selectedContact) return;
     const markUnreadAsRead = async () => {
@@ -308,6 +305,9 @@ export default function App() {
         .eq('sender_pin', selectedContact.contact_pin)
         .eq('receiver_pin', user.pin)
         .eq('is_read', false);
+      
+      // Also fetch messages to sync state
+      fetchMessages();
     };
     markUnreadAsRead();
   }, [user, selectedContact]);
@@ -354,7 +354,7 @@ export default function App() {
       }
 
       setUser(userData);
-      localStorage.setItem('schatpin_chat_user_v5', JSON.stringify(userData));
+      localStorage.setItem('schatpin_chat_user_v7', JSON.stringify(userData));
     } catch (err) {
       setError(err.message || 'Gagal mendaftar');
     }
@@ -386,14 +386,14 @@ export default function App() {
       }
 
       setUser(data);
-      localStorage.setItem('schatpin_chat_user_v5', JSON.stringify(data));
+      localStorage.setItem('schatpin_chat_user_v7', JSON.stringify(data));
     } catch (err) {
       setError(err.message);
     }
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('schatpin_chat_user_v5');
+    localStorage.removeItem('schatpin_chat_user_v7');
     setUser(null);
     setSelectedContact(null);
     setSelectedGroup(null);
@@ -418,7 +418,7 @@ export default function App() {
 
         if (!error && data) {
           setUser(data);
-          localStorage.setItem('schatpin_chat_user_v5', JSON.stringify(data));
+          localStorage.setItem('schatpin_chat_user_v7', JSON.stringify(data));
         }
       } catch (err) {
         console.error('Failed to update avatar', err);
@@ -449,8 +449,8 @@ export default function App() {
           const now = new Date().getTime();
           setContacts(usersData.map(u => {
             const lastSeenTime = u.last_seen ? new Date(u.last_seen).getTime() : 0;
-            // Online if last_seen within 60 seconds
-            const online = (now - lastSeenTime) < 60000;
+            // Online if last_seen within 45 seconds
+            const online = (now - lastSeenTime) < 45000;
             return { contact_pin: u.pin, ...u, online };
           }));
         }
@@ -537,7 +537,7 @@ export default function App() {
     if (!selectedContact) return;
 
     const supabase = getSupabase();
-    const channel = supabase.channel('room:typing');
+    const channel = supabase.channel('room:typing_v7');
     channel.send({
       type: 'broadcast',
       event: 'typing',
@@ -595,7 +595,7 @@ export default function App() {
     }
   };
 
-  // Robust Image Sending with Canvas Compression
+  // Ultra-compressed Image Sending for v1.7
   const handleImageSend = async (e) => {
     const file = e.target.files[0];
     if (!file || (!selectedContact && !selectedGroup)) return;
@@ -607,7 +607,7 @@ export default function App() {
         const canvas = document.createElement('canvas');
         let width = img.width;
         let height = img.height;
-        const maxDim = 600;
+        const maxDim = 450; // Smaller dimension for guaranteed fast delivery & zero payload error
 
         if (width > height && width > maxDim) {
           height *= maxDim / width;
@@ -621,7 +621,7 @@ export default function App() {
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, width, height);
-        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.6);
+        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.4);
 
         const supabase = getSupabase();
         const mediaNotice = "[Foto Dikirim]";
@@ -813,7 +813,7 @@ export default function App() {
             <div className="inline-flex items-center justify-center w-16 h-16 bg-whatsapp-accent rounded-full text-white mb-4 shadow-lg">
               <Shield className="w-8 h-8" />
             </div>
-            <h1 className="text-2xl font-bold text-whatsapp-text">PIN Chat v1.6</h1>
+            <h1 className="text-2xl font-bold text-whatsapp-text">PIN Chat v1.7</h1>
             <p className="text-whatsapp-muted text-sm mt-1">Chat aman dengan perlindungan kata sandi</p>
           </div>
 
@@ -979,7 +979,7 @@ export default function App() {
             <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[radial-gradient(#202c33_1px,transparent_1px)] bg-[size:16px_16px]">
               <div className="flex justify-center my-2">
                 <span className="px-3 py-1 bg-whatsapp-panel text-whatsapp-muted text-xs rounded-lg shadow border border-whatsapp-border flex items-center gap-1.5">
-                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> PIN Chat v1.6 • Audio Notif & Grup Aktif
+                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> PIN Chat v1.7 • Sempurna & Stabil
                 </span>
               </div>
 
@@ -1060,7 +1060,7 @@ export default function App() {
             <div className="w-20 h-20 bg-whatsapp-panel rounded-full flex items-center justify-center mb-4 border border-whatsapp-border shadow">
               <MessageSquare className="w-10 h-10 text-whatsapp-accent" />
             </div>
-            <h2 className="text-xl font-bold text-whatsapp-text mb-1">PIN Chat v1.6</h2>
+            <h2 className="text-xl font-bold text-whatsapp-text mb-1">PIN Chat v1.7</h2>
             <p className="text-sm max-w-sm">Pilih kontak atau grup di sebelah kiri untuk mulai mengobrol.</p>
           </div>
         )}
