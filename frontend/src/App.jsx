@@ -164,8 +164,8 @@ export default function App() {
               markAsRead(newMsg.id);
             }
           } else if (newMsg.receiver_pin === user.pin && notificationsEnabled) {
-            if (Notification.permission === 'granted') {
-              new Notification('Pesan Baru - PIN Chat', { body: newMsg.message });
+            if (typeof window !== 'undefined' && 'Notification' in window && window.Notification.permission === 'granted') {
+              new window.Notification('Pesan Baru - PIN Chat', { body: newMsg.message });
             }
           }
         }
@@ -206,8 +206,8 @@ export default function App() {
       })
       .subscribe();
 
-    if (Notification.permission !== 'granted' && Notification.permission !== 'denied') {
-      Notification.requestPermission();
+    if (typeof window !== 'undefined' && 'Notification' in window && window.Notification.permission !== 'granted' && window.Notification.permission !== 'denied') {
+      window.Notification.requestPermission();
     }
 
     return () => {
