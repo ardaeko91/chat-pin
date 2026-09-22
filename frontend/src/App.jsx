@@ -74,7 +74,7 @@ export default function App() {
         setShowAddModal(false);
         setShowGroupModal(false);
         setShowGroupInfo(false);
-        setShowAboutModal(false);
+        
       } else {
         CapApp.exitApp();
       }
@@ -83,7 +83,7 @@ export default function App() {
     return () => {
       backListener.then(listener => listener.remove());
     };
-  }, [selectedContact, selectedGroup, showSettings, showAddModal, showGroupModal, showGroupInfo, showAboutModal]);
+  }, [selectedContact, selectedGroup, showSettings, showAddModal, showGroupModal, showGroupInfo]);
 
   // Initialize session & theme
   useEffect(() => {
