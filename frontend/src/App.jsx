@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   MessageSquare, UserPlus, LogOut, Send, Check, CheckCheck, 
   Search, Shield, Copy, CheckCircle2, ChevronLeft, Settings, 
-  Lock, Bell, Image as ImageIcon, Users, Plus, Camera, Trash2, Download, Info, UserX
+  Lock, Bell, Image as ImageIcon, Users, Plus, Camera, Trash2, Download, Info, UserX, Sun, Moon, ExternalLink
 } from 'lucide-react';
 import { App as CapApp } from '@capacitor/app';
 import { getSupabase } from './supabaseClient';
@@ -16,6 +16,9 @@ export default function App() {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
 
+  // Theme state (Dark / Light)
+  const [isDarkMode, setIsDarkMode] = useState(true);
+
   // App Lock state
   const [isLocked, setIsLocked] = useState(false);
   const [enterPasscode, setEnterPasscode] = useState('');
@@ -26,6 +29,7 @@ export default function App() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [appLockEnabled, setAppLockEnabled] = useState(false);
   const [newPasscode, setNewPasscode] = useState('');
+  const [showAboutModal, setShowAboutModal] = useState(false);
 
   // Chat state
   const [activeTab, setActiveTab] = useState('chats'); // 'chats' or 'groups'
@@ -37,6 +41,7 @@ export default function App() {
   const [groupMessages, setGroupMessages] = useState([]);
   const [messageInput, setMessageInput] = useState('');
   const [unreadCounts, setUnreadCounts] = useState({}); // contact_pin -> count
+  const [groupUnreadCounts, setGroupUnreadCounts] = useState({}); // group_id -> count
   
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
@@ -65,11 +70,12 @@ export default function App() {
         setSelectedContact(null);
         setSelectedGroup(null);
         setShowGroupInfo(false);
-      } else if (showSettings || showAddModal || showGroupModal || showGroupInfo) {
+      } else if (showSettings || showAddModal || showGroupModal || showGroupInfo || showAboutModal) {
         setShowSettings(false);
         setShowAddModal(false);
         setShowGroupModal(false);
         setShowGroupInfo(false);
+        setShowAboutModal(false);
       } else {
         CapApp.exitApp();
       }
@@ -78,16 +84,19 @@ export default function App() {
     return () => {
       backListener.then(listener => listener.remove());
     };
-  }, [selectedContact, selectedGroup, showSettings, showAddModal, showGroupModal, showGroupInfo]);
+  }, [selectedContact, selectedGroup, showSettings, showAddModal, showGroupModal, showGroupInfo, showAboutModal]);
 
-  // Initialize session
+  // Initialize session & theme
   useEffect(() => {
     try {
-      const savedUser = localStorage.getItem('schatpin_chat_user_v8');
-      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v8') || '{}');
+      const savedUser = localStorage.getItem('schatpin_chat_user_v9');
+      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v9') || '{}');
       
       if (settings.notificationsEnabled !== undefined) {
         setNotificationsEnabled(settings.notificationsEnabled);
+      }
+      if (settings.isDarkMode !== undefined) {
+        setIsDarkMode(settings.isDarkMode);
       }
       
       if (settings.appLockEnabled && settings.passcode) {
@@ -109,22 +118,6 @@ export default function App() {
     }
   }, []);
 
-  // Presence heartbeat (update last_seen every 8s)
-  useEffect(() => {
-    if (!user) return;
-    const supabase = getSupabase();
-    const updatePresence = async () => {
-      await supabase
-        .from('schatpin_users')
-        .update({ last_seen: new Date().toISOString() })
-        .eq('pin', user.pin);
-    };
-
-    updatePresence();
-    const interval = setInterval(updatePresence, 8000);
-    return () => clearInterval(interval);
-  }, [user]);
-
   const verifyUser = async (pin) => {
     const supabase = getSupabase();
     try {
@@ -136,26 +129,28 @@ export default function App() {
 
       if (data && !error) {
         setUser(data);
-        localStorage.setItem('schatpin_chat_user_v8', JSON.stringify(data));
+        localStorage.setItem('schatpin_chat_user_v9', JSON.stringify(data));
       } else {
-        localStorage.removeItem('schatpin_chat_user_v8');
+        localStorage.removeItem('schatpin_chat_user_v9');
       }
     } catch (err) {
       console.error('Failed to verify user', err);
     }
   };
 
-  const updateSettings = (newNotif, newLock, newPin) => {
+  const updateSettings = (newNotif, newLock, newPin, newDark) => {
     try {
-      const current = JSON.parse(localStorage.getItem('schatpin_settings_v8') || '{}');
+      const current = JSON.parse(localStorage.getItem('schatpin_settings_v9') || '{}');
       const settings = {
         notificationsEnabled: newNotif !== undefined ? newNotif : notificationsEnabled,
         appLockEnabled: newLock !== undefined ? newLock : appLockEnabled,
-        passcode: newPin !== undefined ? newPin : (current.passcode || '')
+        passcode: newPin !== undefined ? newPin : (current.passcode || ''),
+        isDarkMode: newDark !== undefined ? newDark : isDarkMode
       };
-      localStorage.setItem('schatpin_settings_v8', JSON.stringify(settings));
+      localStorage.setItem('schatpin_settings_v9', JSON.stringify(settings));
       setNotificationsEnabled(settings.notificationsEnabled);
       setAppLockEnabled(settings.appLockEnabled);
+      if (newDark !== undefined) setIsDarkMode(newDark);
     } catch (e) {
       console.error('Save settings error:', e);
     }
@@ -164,7 +159,7 @@ export default function App() {
   const handleUnlock = (e) => {
     e.preventDefault();
     try {
-      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v8') || '{}');
+      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v9') || '{}');
       if (enterPasscode === settings.passcode) {
         setIsLocked(false);
         setEnterPasscode('');
@@ -177,25 +172,55 @@ export default function App() {
     }
   };
 
-  const playNotificationSound = () => {
+  // Dual audio notifications
+  const playPersonalSound = () => {
     if (!notificationsEnabled) return;
     try {
       if (typeof window !== 'undefined' && 'navigator' in window && navigator.vibrate) {
-        navigator.vibrate([250, 100, 250]);
+        navigator.vibrate([200, 100, 200]);
       }
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const now = ctx.currentTime;
+      // Double chime (cheerful)
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.frequency.setValueAtTime(587.33, now); // D5
+      gain1.gain.setValueAtTime(0.2, now);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.12);
+
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.frequency.setValueAtTime(880, now + 0.15); // A5
+      gain2.gain.setValueAtTime(0.2, now + 0.15);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.start(now + 0.15);
+      osc2.stop(now + 0.3);
+    } catch (e) {}
+  };
+
+  const playGroupSound = () => {
+    if (!notificationsEnabled) return;
+    try {
+      if (typeof window !== 'undefined' && 'navigator' in window && navigator.vibrate) {
+        navigator.vibrate(300);
+      }
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const now = ctx.currentTime;
+      // Single distinct tone for group
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, ctx.currentTime); // A5
-      gain.gain.setValueAtTime(0.25, ctx.currentTime);
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(440, now); // A4
+      gain.gain.setValueAtTime(0.25, now);
       osc.connect(gain);
       gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.25);
-    } catch (e) {
-      // Audio context policy
-    }
+      osc.start(now);
+      osc.stop(now + 0.25);
+    } catch (e) {}
   };
 
   // Realtime subscriptions & Messaging
@@ -208,7 +233,7 @@ export default function App() {
     fetchUnreadCounts();
 
     const msgChannel = supabase
-      .channel('public:schatpin_messages_v8')
+      .channel('public:schatpin_messages_v9')
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'schatpin_messages' },
@@ -226,13 +251,13 @@ export default function App() {
             });
             if (newMsg.receiver_pin === user.pin) {
               markAsRead(newMsg.id);
-              playNotificationSound();
+              playPersonalSound();
             }
           } else if (newMsg.receiver_pin === user.pin) {
-            playNotificationSound();
+            playPersonalSound();
             fetchUnreadCounts();
             if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-              new Notification('Pesan Baru - PIN Chat v1.8', { body: newMsg.message });
+              new Notification('Pesan Baru - PIN Chat v1.9', { body: newMsg.message });
             }
           }
         }
@@ -248,7 +273,7 @@ export default function App() {
       .subscribe();
 
     const groupMsgChannel = supabase
-      .channel('public:schatpin_group_messages_v8')
+      .channel('public:schatpin_group_messages_v9')
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'schatpin_group_messages' },
@@ -261,14 +286,17 @@ export default function App() {
               return prev;
             });
             if (newMsg.sender_pin !== user.pin) {
-              playNotificationSound();
+              playGroupSound();
             }
+          } else if (newMsg.sender_pin !== user.pin) {
+            playGroupSound();
+            fetchUnreadCounts();
           }
         }
       )
       .subscribe();
 
-    const typingChannel = supabase.channel('room:typing_v8')
+    const typingChannel = supabase.channel('room:typing_v9')
       .on('broadcast', { event: 'typing' }, ({ payload }) => {
         if (selectedContact && payload.sender_pin === selectedContact.contact_pin && payload.receiver_pin === user.pin) {
           setTypingUser(payload.isTyping ? selectedContact.name : '');
@@ -316,12 +344,35 @@ export default function App() {
         });
         setUnreadCounts(counts);
       }
+
+      // Group unread counts
+      const { data: mems } = await supabase
+        .from('schatpin_group_members')
+        .select('group_id')
+        .eq('user_pin', user.pin);
+
+      if (mems && mems.length > 0) {
+        const gIds = mems.map(m => m.group_id);
+        const { data: gMsgs } = await supabase
+          .from('schatpin_group_messages')
+          .select('group_id, sender_pin')
+          .in('group_id', gIds);
+
+        if (gMsgs) {
+          const gCounts = {};
+          gMsgs.forEach(gm => {
+            if (gm.sender_pin !== user.pin) {
+              gCounts[gm.group_id] = (gCounts[gm.group_id] || 0) + 1;
+            }
+          });
+          setGroupUnreadCounts(gCounts);
+        }
+      }
     } catch (e) {
       console.error(e);
     }
   };
 
-  // Mark all unread messages from selectedContact as read instantly
   useEffect(() => {
     if (!user || !selectedContact) return;
     const markUnreadAsRead = async () => {
@@ -368,7 +419,7 @@ export default function App() {
         pin = generatePin();
         const { data, error } = await supabase
           .from('schatpin_users')
-          .insert([{ pin, name: inputName.trim(), password: inputPassword.trim(), avatar, last_seen: new Date().toISOString() }])
+          .insert([{ pin, name: inputName.trim(), password: inputPassword.trim(), avatar }])
           .select()
           .single();
 
@@ -381,7 +432,7 @@ export default function App() {
       }
 
       setUser(userData);
-      localStorage.setItem('schatpin_chat_user_v8', JSON.stringify(userData));
+      localStorage.setItem('schatpin_chat_user_v9', JSON.stringify(userData));
     } catch (err) {
       setError(err.message || 'Gagal mendaftar');
     }
@@ -413,14 +464,14 @@ export default function App() {
       }
 
       setUser(data);
-      localStorage.setItem('schatpin_chat_user_v8', JSON.stringify(data));
+      localStorage.setItem('schatpin_chat_user_v9', JSON.stringify(data));
     } catch (err) {
       setError(err.message);
     }
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('schatpin_chat_user_v8');
+    localStorage.removeItem('schatpin_chat_user_v9');
     setUser(null);
     setSelectedContact(null);
     setSelectedGroup(null);
@@ -445,10 +496,38 @@ export default function App() {
 
         if (!error && data) {
           setUser(data);
-          localStorage.setItem('schatpin_chat_user_v8', JSON.stringify(data));
+          localStorage.setItem('schatpin_chat_user_v9', JSON.stringify(data));
         }
       } catch (err) {
         console.error('Failed to update avatar', err);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Group profile picture update
+  const handleGroupAvatarUpload = async (e, group) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64Image = reader.result;
+      const supabase = getSupabase();
+      try {
+        const { data, error } = await supabase
+          .from('schatpin_groups')
+          .update({ avatar: base64Image })
+          .eq('group_id', group.group_id)
+          .select()
+          .single();
+
+        if (!error && data) {
+          setSelectedGroup(data);
+          await fetchGroups();
+        }
+      } catch (err) {
+        console.error('Failed to update group avatar', err);
       }
     };
     reader.readAsDataURL(file);
@@ -473,13 +552,7 @@ export default function App() {
           .in('pin', contactPins);
 
         if (!userError && usersData) {
-          const now = new Date().getTime();
-          setContacts(usersData.map(u => {
-            const lastSeenTime = u.last_seen ? new Date(u.last_seen).getTime() : 0;
-            // Online if last_seen within 45 seconds
-            const online = (now - lastSeenTime) < 45000;
-            return { contact_pin: u.pin, ...u, online };
-          }));
+          setContacts(usersData.map(u => ({ contact_pin: u.pin, ...u })));
         }
       } else {
         setContacts([]);
@@ -564,7 +637,7 @@ export default function App() {
     if (!selectedContact) return;
 
     const supabase = getSupabase();
-    const channel = supabase.channel('room:typing_v8');
+    const channel = supabase.channel('room:typing_v9');
     channel.send({
       type: 'broadcast',
       event: 'typing',
@@ -836,15 +909,23 @@ export default function App() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  // Theme styling variables
+  const themeBg = isDarkMode ? 'bg-whatsapp-dark text-whatsapp-text' : 'bg-gray-100 text-gray-900';
+  const panelBg = isDarkMode ? 'bg-whatsapp-panel border-whatsapp-border' : 'bg-white border-gray-200';
+  const chatBg = isDarkMode ? 'bg-whatsapp-chat' : 'bg-gray-50';
+  const inputBg = isDarkMode ? 'bg-whatsapp-dark border-whatsapp-border text-white' : 'bg-gray-100 border-gray-300 text-gray-900';
+  const incomingBg = isDarkMode ? 'bg-whatsapp-incoming text-whatsapp-text border-whatsapp-border' : 'bg-white text-gray-900 border-gray-200';
+  const outgoingBg = isDarkMode ? 'bg-whatsapp-outgoing text-whatsapp-text' : 'bg-emerald-600 text-white';
+
   if (isLocked) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-whatsapp-chat p-4">
-        <div className="w-full max-w-md bg-whatsapp-panel rounded-2xl shadow-2xl border border-whatsapp-border p-8 text-center">
+      <div className={`flex items-center justify-center min-h-screen ${chatBg} p-4`}>
+        <div className={`w-full max-w-md ${panelBg} rounded-2xl shadow-2xl border p-8 text-center`}>
           <div className="inline-flex items-center justify-center w-16 h-16 bg-whatsapp-accent rounded-full text-white mb-4 shadow-lg">
             <Lock className="w-8 h-8" />
           </div>
-          <h1 className="text-2xl font-bold text-whatsapp-text">Aplikasi Dikunci</h1>
-          <p className="text-whatsapp-muted text-sm mt-1 mb-6">Masukkan PIN Keamanan untuk membuka aplikasi</p>
+          <h1 className="text-2xl font-bold">Aplikasi Dikunci</h1>
+          <p className="text-sm mt-1 mb-6 opacity-70">Masukkan PIN Keamanan untuk membuka aplikasi</p>
 
           {lockError && <div className="mb-4 p-3 bg-red-900/50 border border-red-500 text-red-200 rounded-lg text-sm">{lockError}</div>}
 
@@ -855,7 +936,7 @@ export default function App() {
               value={enterPasscode}
               onChange={(e) => setEnterPasscode(e.target.value)}
               placeholder="••••"
-              className="w-full px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text text-center text-2xl tracking-widest focus:outline-none focus:border-whatsapp-accent transition"
+              className={`w-full px-4 py-3 ${inputBg} rounded-xl text-center text-2xl tracking-widest focus:outline-none focus:border-whatsapp-accent transition`}
               required
             />
             <button type="submit" className="w-full py-3 bg-whatsapp-accent hover:bg-emerald-600 text-white font-medium rounded-xl shadow-lg transition">Buka Kunci</button>
@@ -867,19 +948,19 @@ export default function App() {
 
   if (!user) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-whatsapp-chat p-4">
-        <div className="w-full max-w-md bg-whatsapp-panel rounded-2xl shadow-2xl border border-whatsapp-border p-8">
+      <div className={`flex items-center justify-center min-h-screen ${chatBg} p-4`}>
+        <div className={`w-full max-w-md ${panelBg} rounded-2xl shadow-2xl border p-8`}>
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-16 h-16 bg-whatsapp-accent rounded-full text-white mb-4 shadow-lg">
               <Shield className="w-8 h-8" />
             </div>
-            <h1 className="text-2xl font-bold text-whatsapp-text">PIN Chat v1.8</h1>
-            <p className="text-whatsapp-muted text-sm mt-1">Chat aman dengan perlindungan kata sandi</p>
+            <h1 className="text-2xl font-bold">PIN Chat v1.9</h1>
+            <p className="text-sm mt-1 opacity-70">Chat aman dengan perlindungan kata sandi</p>
           </div>
 
-          <div className="flex rounded-lg bg-whatsapp-dark p-1 mb-6 border border-whatsapp-border">
-            <button type="button" onClick={() => { setAuthMode('register'); setError(''); }} className={`flex-1 py-2 text-sm font-medium rounded-md transition ${authMode === 'register' ? 'bg-whatsapp-accent text-white shadow' : 'text-whatsapp-muted hover:text-white'}`}>Buat PIN Baru</button>
-            <button type="button" onClick={() => { setAuthMode('login'); setError(''); }} className={`flex-1 py-2 text-sm font-medium rounded-md transition ${authMode === 'login' ? 'bg-whatsapp-accent text-white shadow' : 'text-whatsapp-muted hover:text-white'}`}>Masuk dengan PIN</button>
+          <div className="flex rounded-lg bg-whatsapp-dark/20 p-1 mb-6 border border-gray-500/30">
+            <button type="button" onClick={() => { setAuthMode('register'); setError(''); }} className={`flex-1 py-2 text-sm font-medium rounded-md transition ${authMode === 'register' ? 'bg-whatsapp-accent text-white shadow' : 'opacity-70 hover:opacity-100'}`}>Buat PIN Baru</button>
+            <button type="button" onClick={() => { setAuthMode('login'); setError(''); }} className={`flex-1 py-2 text-sm font-medium rounded-md transition ${authMode === 'login' ? 'bg-whatsapp-accent text-white shadow' : 'opacity-70 hover:opacity-100'}`}>Masuk dengan PIN</button>
           </div>
 
           {error && <div className="mb-4 p-3 bg-red-900/50 border border-red-500 text-red-200 rounded-lg text-sm text-center">{error}</div>}
@@ -887,28 +968,35 @@ export default function App() {
           {authMode === 'register' ? (
             <form onSubmit={handleRegister} className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-whatsapp-muted mb-1 uppercase tracking-wider">Nama Kamu</label>
-                <input type="text" value={inputName} onChange={(e) => setInputName(e.target.value)} placeholder="Contoh: Arda Eko" className="w-full px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text focus:outline-none focus:border-whatsapp-accent transition" required />
+                <label className="block text-xs font-medium uppercase tracking-wider mb-1 opacity-70">Nama Kamu</label>
+                <input type="text" value={inputName} onChange={(e) => setInputName(e.target.value)} placeholder="Contoh: Arda Eko" className={`w-full px-4 py-3 ${inputBg} rounded-xl focus:outline-none focus:border-whatsapp-accent transition`} required />
               </div>
               <div>
-                <label className="block text-xs font-medium text-whatsapp-muted mb-1 uppercase tracking-wider">Kata Sandi Rahasia</label>
-                <input type="password" value={inputPassword} onChange={(e) => setInputPassword(e.target.value)} placeholder="Kata sandi akun" className="w-full px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text focus:outline-none focus:border-whatsapp-accent transition" required />
+                <label className="block text-xs font-medium uppercase tracking-wider mb-1 opacity-70">Kata Sandi Rahasia</label>
+                <input type="password" value={inputPassword} onChange={(e) => setInputPassword(e.target.value)} placeholder="Kata sandi akun" className={`w-full px-4 py-3 ${inputBg} rounded-xl focus:outline-none focus:border-whatsapp-accent transition`} required />
               </div>
               <button type="submit" className="w-full py-3 bg-whatsapp-accent hover:bg-emerald-600 text-white font-medium rounded-xl shadow-lg transition flex items-center justify-center gap-2">Buat PIN & Masuk</button>
             </form>
           ) : (
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-whatsapp-muted mb-1 uppercase tracking-wider">PIN Kamu</label>
-                <input type="text" value={inputPin} onChange={(e) => setInputPin(e.target.value)} placeholder="Contoh: PIN7A8B2" className="w-full px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text uppercase font-mono tracking-widest focus:outline-none focus:border-whatsapp-accent transition" required />
+                <label className="block text-xs font-medium uppercase tracking-wider mb-1 opacity-70">PIN Kamu</label>
+                <input type="text" value={inputPin} onChange={(e) => setInputPin(e.target.value)} placeholder="Contoh: PIN7A8B2" className={`w-full px-4 py-3 ${inputBg} rounded-xl uppercase font-mono tracking-widest focus:outline-none focus:border-whatsapp-accent transition`} required />
               </div>
               <div>
-                <label className="block text-xs font-medium text-whatsapp-muted mb-1 uppercase tracking-wider">Kata Sandi</label>
-                <input type="password" value={inputPassword} onChange={(e) => setInputPassword(e.target.value)} placeholder="Kata sandi akun" className="w-full px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text focus:outline-none focus:border-whatsapp-accent transition" required />
+                <label className="block text-xs font-medium uppercase tracking-wider mb-1 opacity-70">Kata Sandi</label>
+                <input type="password" value={inputPassword} onChange={(e) => setInputPassword(e.target.value)} placeholder="Kata sandi akun" className={`w-full px-4 py-3 ${inputBg} rounded-xl focus:outline-none focus:border-whatsapp-accent transition`} required />
               </div>
               <button type="submit" className="w-full py-3 bg-whatsapp-accent hover:bg-emerald-600 text-white font-medium rounded-xl shadow-lg transition flex items-center justify-center gap-2">Masuk Chat</button>
             </form>
           )}
+
+          {/* Watermark Footer */}
+          <div className="mt-8 text-center text-xs opacity-60">
+            <a href="https://www.instagram.com/ardaeko.developer/" target="_blank" rel="noopener noreferrer" className="hover:text-whatsapp-accent transition inline-flex items-center gap-1">
+              Chat Pin | Develope by @ardaeko <ExternalLink className="w-3 h-3" />
+            </a>
+          </div>
         </div>
       </div>
     );
@@ -918,74 +1006,77 @@ export default function App() {
   const filteredGroups = groups.filter(g => g.name.toLowerCase().includes(searchQuery.toLowerCase()));
 
   return (
-    <div className="flex h-screen w-screen bg-whatsapp-dark overflow-hidden">
+    <div className={`flex h-screen w-screen ${themeBg} overflow-hidden`}>
       {/* Sidebar */}
-      <div className={`w-full md:w-96 flex flex-col bg-whatsapp-panel border-r border-whatsapp-border ${(selectedContact || selectedGroup) ? 'hidden md:flex' : 'flex'}`}>
-        <div className="flex items-center justify-between px-4 py-3 bg-whatsapp-panel border-b border-whatsapp-border">
+      <div className={`w-full md:w-96 flex flex-col ${panelBg} border-r ${(selectedContact || selectedGroup) ? 'hidden md:flex' : 'flex'}`}>
+        <div className={`flex items-center justify-between px-4 py-3 ${panelBg} border-b`}>
           <div className="flex items-center gap-3">
             <div className="relative group cursor-pointer" title="Ubah Foto Profil">
-              <img src={user.avatar} alt={user.name} className="w-10 h-10 rounded-full bg-whatsapp-dark border border-whatsapp-border object-cover" />
+              <img src={user.avatar} alt={user.name} className="w-10 h-10 rounded-full bg-whatsapp-dark border object-cover" />
               <label className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition cursor-pointer">
                 <Camera className="w-4 h-4 text-white" />
                 <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
               </label>
             </div>
             <div>
-              <h2 className="font-semibold text-whatsapp-text text-sm">{user.name}</h2>
+              <h2 className="font-semibold text-sm">{user.name}</h2>
               <div className="flex items-center gap-1.5 text-xs text-whatsapp-accent font-mono">
                 <span>{user.pin}</span>
-                <button onClick={copyPin} title="Salin PIN" className="hover:text-white transition">
+                <button onClick={copyPin} title="Salin PIN" className="opacity-70 hover:opacity-100 transition">
                   {copied ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                 </button>
               </div>
             </div>
           </div>
           <div className="flex items-center gap-1">
-            <button onClick={() => setShowAddModal(true)} className="p-2 text-whatsapp-muted hover:text-whatsapp-text hover:bg-whatsapp-dark/50 rounded-full transition" title="Tambah Kontak"><UserPlus className="w-5 h-5" /></button>
-            <button onClick={() => setShowGroupModal(true)} className="p-2 text-whatsapp-muted hover:text-whatsapp-text hover:bg-whatsapp-dark/50 rounded-full transition" title="Grup Chat"><Users className="w-5 h-5" /></button>
-            <button onClick={() => setShowSettings(true)} className="p-2 text-whatsapp-muted hover:text-whatsapp-text hover:bg-whatsapp-dark/50 rounded-full transition" title="Pengaturan"><Settings className="w-5 h-5" /></button>
-            <button onClick={handleLogout} className="p-2 text-whatsapp-muted hover:text-red-400 hover:bg-whatsapp-dark/50 rounded-full transition" title="Keluar"><LogOut className="w-5 h-5" /></button>
+            <button onClick={() => updateSettings(undefined, undefined, undefined, !isDarkMode)} className="p-2 opacity-70 hover:opacity-100 rounded-full transition" title="Ganti Tema">
+              {isDarkMode ? <Sun className="w-5 h-5 text-amber-400" /> : <Moon className="w-5 h-5 text-gray-700" />}
+            </button>
+            <button onClick={() => setShowAboutModal(true)} className="p-2 opacity-70 hover:opacity-100 rounded-full transition" title="Tentang Aplikasi">
+              <Info className="w-5 h-5" />
+            </button>
+            <button onClick={() => setShowAddModal(true)} className="p-2 opacity-70 hover:opacity-100 rounded-full transition" title="Tambah Kontak"><UserPlus className="w-5 h-5" /></button>
+            <button onClick={() => setShowGroupModal(true)} className="p-2 opacity-70 hover:opacity-100 rounded-full transition" title="Grup Chat"><Users className="w-5 h-5" /></button>
+            <button onClick={() => setShowSettings(true)} className="p-2 opacity-70 hover:opacity-100 rounded-full transition" title="Pengaturan"><Settings className="w-5 h-5" /></button>
+            <button onClick={handleLogout} className="p-2 opacity-70 hover:opacity-100 text-red-400 rounded-full transition" title="Keluar"><LogOut className="w-5 h-5" /></button>
           </div>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-whatsapp-border bg-whatsapp-dark/50">
-          <button onClick={() => setActiveTab('chats')} className={`flex-1 py-2 text-xs font-semibold uppercase tracking-wider transition ${activeTab === 'chats' ? 'text-whatsapp-accent border-b-2 border-whatsapp-accent bg-whatsapp-dark' : 'text-whatsapp-muted hover:text-white'}`}>Personal</button>
-          <button onClick={() => setActiveTab('groups')} className={`flex-1 py-2 text-xs font-semibold uppercase tracking-wider transition ${activeTab === 'groups' ? 'text-whatsapp-accent border-b-2 border-whatsapp-accent bg-whatsapp-dark' : 'text-whatsapp-muted hover:text-white'}`}>Grup ({groups.length})</button>
+        <div className={`flex border-b ${isDarkMode ? 'bg-whatsapp-dark/50' : 'bg-gray-100'}`}>
+          <button onClick={() => setActiveTab('chats')} className={`flex-1 py-2 text-xs font-semibold uppercase tracking-wider transition ${activeTab === 'chats' ? 'text-whatsapp-accent border-b-2 border-whatsapp-accent' : 'opacity-60 hover:opacity-100'}`}>Personal</button>
+          <button onClick={() => setActiveTab('groups')} className={`flex-1 py-2 text-xs font-semibold uppercase tracking-wider transition ${activeTab === 'groups' ? 'text-whatsapp-accent border-b-2 border-whatsapp-accent' : 'opacity-60 hover:opacity-100'}`}>Grup ({groups.length})</button>
         </div>
 
         {/* Search */}
-        <div className="p-3 bg-whatsapp-dark/40 border-b border-whatsapp-border">
-          <div className="flex items-center gap-2 px-3 py-2 bg-whatsapp-dark rounded-xl border border-whatsapp-border">
-            <Search className="w-4 h-4 text-whatsapp-muted" />
-            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Cari..." className="w-full bg-transparent text-whatsapp-text text-sm focus:outline-none placeholder-whatsapp-muted" />
+        <div className={`p-3 border-b ${isDarkMode ? 'bg-whatsapp-dark/40' : 'bg-gray-50'}`}>
+          <div className={`flex items-center gap-2 px-3 py-2 ${inputBg} rounded-xl border`}>
+            <Search className="w-4 h-4 opacity-60" />
+            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Cari..." className="w-full bg-transparent text-sm focus:outline-none" />
           </div>
         </div>
 
         {/* List */}
-        <div className="flex-1 overflow-y-auto divide-y divide-whatsapp-border/40">
+        <div className="flex-1 overflow-y-auto divide-y divide-gray-500/20">
           {activeTab === 'chats' ? (
             filteredContacts.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-64 text-center p-6 text-whatsapp-muted">
-                <MessageSquare className="w-12 h-12 mb-2 opacity-40" />
+              <div className="flex flex-col items-center justify-center h-64 text-center p-6 opacity-60">
+                <MessageSquare className="w-12 h-12 mb-2" />
                 <p className="text-sm">Belum ada kontak.</p>
               </div>
             ) : (
               filteredContacts.map(contact => {
                 const unreadCount = unreadCounts[contact.contact_pin] || 0;
                 return (
-                  <div key={contact.contact_pin} onClick={() => { setSelectedContact(contact); setSelectedGroup(null); }} className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition hover:bg-whatsapp-dark/60 ${selectedContact?.contact_pin === contact.contact_pin ? 'bg-whatsapp-dark/80' : ''}`}>
-                    <div className="relative">
-                      <img src={contact.avatar} alt={contact.name} className="w-12 h-12 rounded-full bg-whatsapp-dark border border-whatsapp-border object-cover" />
-                      {contact.online && <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-whatsapp-green border-2 border-whatsapp-panel rounded-full" />}
-                    </div>
+                  <div key={contact.contact_pin} onClick={() => { setSelectedContact(contact); setSelectedGroup(null); }} className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition hover:opacity-80 ${selectedContact?.contact_pin === contact.contact_pin ? (isDarkMode ? 'bg-whatsapp-dark/80' : 'bg-gray-200') : ''}`}>
+                    <img src={contact.avatar} alt={contact.name} className="w-12 h-12 rounded-full bg-whatsapp-dark border object-cover" />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between mb-0.5">
-                        <h3 className="font-semibold text-whatsapp-text text-sm truncate">{contact.name}</h3>
-                        <span className="text-xs text-whatsapp-muted font-mono">{contact.contact_pin}</span>
+                        <h3 className="font-semibold text-sm truncate">{contact.name}</h3>
+                        <span className="text-xs opacity-60 font-mono">{contact.contact_pin}</span>
                       </div>
                       <div className="flex items-center justify-between">
-                        <p className="text-xs text-whatsapp-muted truncate">{contact.online ? 'Online' : 'Offline'}</p>
+                        <p className="text-xs opacity-60 truncate">Ketuk untuk chat</p>
                         {unreadCount > 0 && (
                           <span className="px-2 py-0.5 bg-whatsapp-accent text-white font-bold text-[10px] rounded-full shadow">
                             {unreadCount}
@@ -999,41 +1090,66 @@ export default function App() {
             )
           ) : (
             filteredGroups.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-64 text-center p-6 text-whatsapp-muted">
-                <Users className="w-12 h-12 mb-2 opacity-40" />
+              <div className="flex flex-col items-center justify-center h-64 text-center p-6 opacity-60">
+                <Users className="w-12 h-12 mb-2" />
                 <p className="text-sm">Belum ada grup.</p>
               </div>
             ) : (
-              filteredGroups.map(group => (
-                <div key={group.group_id} onClick={() => { setSelectedGroup(group); setSelectedContact(null); }} className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition hover:bg-whatsapp-dark/60 ${selectedGroup?.group_id === group.group_id ? 'bg-whatsapp-dark/80' : ''}`}>
-                  <img src={group.avatar} alt={group.name} className="w-12 h-12 rounded-full bg-whatsapp-dark border border-whatsapp-border object-cover" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-0.5">
-                      <h3 className="font-semibold text-whatsapp-text text-sm truncate">{group.name}</h3>
-                      <span className="text-xs text-whatsapp-accent font-mono">{group.group_id}</span>
+              filteredGroups.map(group => {
+                const gUnread = groupUnreadCounts[group.group_id] || 0;
+                return (
+                  <div key={group.group_id} onClick={() => { setSelectedGroup(group); setSelectedContact(null); }} className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition hover:opacity-80 ${selectedGroup?.group_id === group.group_id ? (isDarkMode ? 'bg-whatsapp-dark/80' : 'bg-gray-200') : ''}`}>
+                    <img src={group.avatar} alt={group.name} className="w-12 h-12 rounded-full bg-whatsapp-dark border object-cover" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <h3 className="font-semibold text-sm truncate">{group.name}</h3>
+                        <span className="text-xs text-whatsapp-accent font-mono">{group.group_id}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs opacity-60 truncate">Grup Obrolan</p>
+                        {gUnread > 0 && (
+                          <span className="px-2 py-0.5 bg-whatsapp-accent text-white font-bold text-[10px] rounded-full shadow">
+                            {gUnread}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <p className="text-xs text-whatsapp-muted truncate">Grup Obrolan</p>
                   </div>
-                </div>
-              ))
+                );
+              })
             )
           )}
+        </div>
+
+        {/* Watermark Footer */}
+        <div className={`p-2 text-center text-[11px] border-t opacity-75 ${isDarkMode ? 'bg-whatsapp-panel border-whatsapp-border' : 'bg-white border-gray-200'}`}>
+          <a href="https://www.instagram.com/ardaeko.developer/" target="_blank" rel="noopener noreferrer" className="hover:text-whatsapp-accent transition inline-flex items-center gap-1">
+            Chat Pin | Develope by @ardaeko <ExternalLink className="w-3 h-3" />
+          </a>
         </div>
       </div>
 
       {/* Main Chat */}
-      <div className={`flex-1 flex flex-col bg-whatsapp-chat ${(!selectedContact && !selectedGroup) ? 'hidden md:flex' : 'flex'}`}>
+      <div className={`flex-1 flex flex-col ${chatBg} ${(!selectedContact && !selectedGroup) ? 'hidden md:flex' : 'flex'}`}>
         {(selectedContact || selectedGroup) ? (
           <>
             {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 bg-whatsapp-panel border-b border-whatsapp-border shadow-sm">
+            <div className={`flex items-center justify-between px-4 py-3 ${panelBg} border-b shadow-sm`}>
               <div className="flex items-center gap-3">
-                <button onClick={() => { setSelectedContact(null); setSelectedGroup(null); setShowGroupInfo(false); }} className="md:hidden p-1.5 text-whatsapp-muted hover:text-white rounded-full transition"><ChevronLeft className="w-6 h-6" /></button>
-                <img src={selectedContact ? selectedContact.avatar : selectedGroup.avatar} alt="Avatar" className="w-10 h-10 rounded-full bg-whatsapp-dark border border-whatsapp-border object-cover" />
+                <button onClick={() => { setSelectedContact(null); setSelectedGroup(null); setShowGroupInfo(false); }} className="md:hidden p-1.5 opacity-70 hover:opacity-100 rounded-full transition"><ChevronLeft className="w-6 h-6" /></button>
+                <div className="relative group cursor-pointer">
+                  <img src={selectedContact ? selectedContact.avatar : selectedGroup.avatar} alt="Avatar" className="w-10 h-10 rounded-full bg-whatsapp-dark border object-cover" />
+                  {selectedGroup && selectedGroup.admin_pin === user.pin && (
+                    <label className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition cursor-pointer" title="Ganti Foto Grup">
+                      <Camera className="w-4 h-4 text-white" />
+                      <input type="file" accept="image/*" onChange={(e) => handleGroupAvatarUpload(e, selectedGroup)} className="hidden" />
+                    </label>
+                  )}
+                </div>
                 <div>
-                  <h3 className="font-semibold text-whatsapp-text text-sm">{selectedContact ? selectedContact.name : selectedGroup.name}</h3>
-                  <p className="text-xs text-whatsapp-muted font-mono">
-                    {selectedContact ? `PIN: ${selectedContact.contact_pin} • ${selectedContact.online ? 'Online' : 'Offline'}` : `ID Grup: ${selectedGroup.group_id}`}
+                  <h3 className="font-semibold text-sm">{selectedContact ? selectedContact.name : selectedGroup.name}</h3>
+                  <p className="text-xs opacity-75 font-mono">
+                    {selectedContact ? `PIN: ${selectedContact.contact_pin}` : `ID Grup: ${selectedGroup.group_id}`}
                     {typingUser && <span className="text-whatsapp-accent ml-2 italic">({typingUser} sedang mengetik...)</span>}
                   </p>
                 </div>
@@ -1041,16 +1157,16 @@ export default function App() {
               <div className="flex items-center gap-1">
                 {selectedContact && (
                   <>
-                    <button onClick={handleClearChat} className="p-2 text-whatsapp-muted hover:text-amber-400 rounded-full transition" title="Hapus Riwayat Chat">
+                    <button onClick={handleClearChat} className="p-2 opacity-70 hover:opacity-100 text-amber-400 rounded-full transition" title="Hapus Riwayat Chat">
                       <Trash2 className="w-5 h-5" />
                     </button>
-                    <button onClick={handleUnfriend} className="p-2 text-whatsapp-muted hover:text-red-400 rounded-full transition" title="Hapus Pertemanan (Unfriend)">
+                    <button onClick={handleUnfriend} className="p-2 opacity-70 hover:opacity-100 text-red-400 rounded-full transition" title="Hapus Pertemanan (Unfriend)">
                       <UserX className="w-5 h-5" />
                     </button>
                   </>
                 )}
                 {selectedGroup && (
-                  <button onClick={() => fetchGroupMembers(selectedGroup.group_id)} className="p-2 text-whatsapp-muted hover:text-white rounded-full transition" title="Info Grup">
+                  <button onClick={() => fetchGroupMembers(selectedGroup.group_id)} className="p-2 opacity-70 hover:opacity-100 rounded-full transition" title="Info Grup">
                     <Info className="w-5 h-5" />
                   </button>
                 )}
@@ -1058,10 +1174,10 @@ export default function App() {
             </div>
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[radial-gradient(#202c33_1px,transparent_1px)] bg-[size:16px_16px]">
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
               <div className="flex justify-center my-2">
-                <span className="px-3 py-1 bg-whatsapp-panel text-whatsapp-muted text-xs rounded-lg shadow border border-whatsapp-border flex items-center gap-1.5">
-                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> PIN Chat v1.8 • Fitur Lengkap & Stabil
+                <span className={`px-3 py-1 ${panelBg} text-xs rounded-lg shadow border flex items-center gap-1.5 opacity-90`}>
+                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> PIN Chat v1.9 • Sempurna & Stabil
                 </span>
               </div>
 
@@ -1070,7 +1186,7 @@ export default function App() {
                   const isMe = msg.sender_pin === user.pin;
                   return (
                     <div key={msg.id || index} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[75%] md:max-w-md rounded-2xl px-4 py-2 shadow text-sm ${isMe ? 'bg-whatsapp-outgoing text-whatsapp-text rounded-tr-none' : 'bg-whatsapp-incoming text-whatsapp-text rounded-tl-none border border-whatsapp-border'}`}>
+                      <div className={`max-w-[75%] md:max-w-md rounded-2xl px-4 py-2 shadow text-sm ${isMe ? outgoingBg + ' rounded-tr-none' : incomingBg + ' rounded-tl-none border'}`}>
                         {msg.media_url && (
                           <div className="mb-2">
                             <img src={msg.media_url} alt="Media" className="rounded-xl max-h-64 object-cover w-full" />
@@ -1080,7 +1196,7 @@ export default function App() {
                           </div>
                         )}
                         <p className="break-words whitespace-pre-wrap leading-relaxed">{msg.message}</p>
-                        <div className={`flex items-center justify-end gap-1 mt-1 text-[10px] ${isMe ? 'text-emerald-200/70' : 'text-whatsapp-muted'}`}>
+                        <div className={`flex items-center justify-end gap-1 mt-1 text-[10px] ${isMe ? 'opacity-80' : 'opacity-60'}`}>
                           <span>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                           {isMe && (
                             <span className={msg.is_read ? 'text-blue-400 font-bold' : ''}>
@@ -1097,7 +1213,7 @@ export default function App() {
                   const isMe = msg.sender_pin === user.pin;
                   return (
                     <div key={msg.id || index} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[75%] md:max-w-md rounded-2xl px-4 py-2 shadow text-sm ${isMe ? 'bg-whatsapp-outgoing text-whatsapp-text rounded-tr-none' : 'bg-whatsapp-incoming text-whatsapp-text rounded-tl-none border border-whatsapp-border'}`}>
+                      <div className={`max-w-[75%] md:max-w-md rounded-2xl px-4 py-2 shadow text-sm ${isMe ? outgoingBg + ' rounded-tr-none' : incomingBg + ' rounded-tl-none border'}`}>
                         {!isMe && <p className="text-xs font-semibold text-whatsapp-accent mb-0.5">{msg.sender_name}</p>}
                         {msg.media_url && (
                           <div className="mb-2">
@@ -1108,7 +1224,7 @@ export default function App() {
                           </div>
                         )}
                         <p className="break-words whitespace-pre-wrap leading-relaxed">{msg.message}</p>
-                        <div className="flex items-center justify-end gap-1 mt-1 text-[10px] text-whatsapp-muted">
+                        <div className="flex items-center justify-end gap-1 mt-1 text-[10px] opacity-60">
                           <span>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                         </div>
                       </div>
@@ -1120,8 +1236,8 @@ export default function App() {
             </div>
 
             {/* Footer Input */}
-            <form onSubmit={sendMessage} className="px-4 py-3 bg-whatsapp-panel border-t border-whatsapp-border flex items-center gap-3">
-              <label className="p-2.5 text-whatsapp-muted hover:text-white cursor-pointer transition rounded-xl bg-whatsapp-dark border border-whatsapp-border" title="Kirim Gambar">
+            <form onSubmit={sendMessage} className={`px-4 py-3 ${panelBg} border-t flex items-center gap-3`}>
+              <label className={`p-2.5 opacity-75 hover:opacity-100 cursor-pointer transition rounded-xl ${inputBg} border`} title="Kirim Gambar">
                 <ImageIcon className="w-5 h-5" />
                 <input type="file" accept="image/*" onChange={handleImageSend} className="hidden" />
               </label>
@@ -1130,7 +1246,7 @@ export default function App() {
                 value={messageInput}
                 onChange={handleTypingInput}
                 placeholder="Ketik pesan..."
-                className="flex-1 px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text text-sm focus:outline-none focus:border-whatsapp-accent transition"
+                className={`flex-1 px-4 py-3 ${inputBg} rounded-xl text-sm focus:outline-none focus:border-whatsapp-accent transition`}
               />
               <button type="submit" disabled={!messageInput?.trim()} className={`p-3 rounded-xl bg-whatsapp-accent text-white shadow transition flex items-center justify-center ${!messageInput?.trim() ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-600'}`}>
                 <Send className="w-5 h-5" />
@@ -1138,11 +1254,11 @@ export default function App() {
             </form>
           </>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-center p-8 text-whatsapp-muted">
-            <div className="w-20 h-20 bg-whatsapp-panel rounded-full flex items-center justify-center mb-4 border border-whatsapp-border shadow">
+          <div className="flex-1 flex flex-col items-center justify-center text-center p-8 opacity-60">
+            <div className={`w-20 h-20 ${panelBg} rounded-full flex items-center justify-center mb-4 border shadow`}>
               <MessageSquare className="w-10 h-10 text-whatsapp-accent" />
             </div>
-            <h2 className="text-xl font-bold text-whatsapp-text mb-1">PIN Chat v1.8</h2>
+            <h2 className="text-xl font-bold mb-1">PIN Chat v1.9</h2>
             <p className="text-sm max-w-sm">Pilih kontak atau grup di sebelah kiri untuk mulai mengobrol.</p>
           </div>
         )}
@@ -1151,14 +1267,14 @@ export default function App() {
       {/* Add Contact Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="w-full max-w-md bg-whatsapp-panel border border-whatsapp-border rounded-2xl shadow-2xl p-6">
-            <h3 className="text-lg font-bold text-whatsapp-text mb-2">Tambah Kontak Baru</h3>
-            <p className="text-xs text-whatsapp-muted mb-4">Masukkan PIN teman kamu untuk menambahkannya.</p>
+          <div className={`w-full max-w-md ${panelBg} border rounded-2xl shadow-2xl p-6`}>
+            <h3 className="text-lg font-bold mb-2">Tambah Kontak Baru</h3>
+            <p className="text-xs opacity-75 mb-4">Masukkan PIN teman kamu untuk menambahkannya.</p>
             {addError && <div className="mb-4 p-3 bg-red-900/50 border border-red-500 text-red-200 rounded-lg text-sm">{addError}</div>}
             <form onSubmit={handleAddContact} className="space-y-4">
-              <input type="text" value={newContactPin} onChange={(e) => setNewContactPin(e.target.value)} placeholder="Contoh: PIN3B2A1" className="w-full px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text uppercase font-mono tracking-widest focus:outline-none focus:border-whatsapp-accent transition" required />
+              <input type="text" value={newContactPin} onChange={(e) => setNewContactPin(e.target.value)} placeholder="Contoh: PIN3B2A1" className={`w-full px-4 py-3 ${inputBg} rounded-xl uppercase font-mono tracking-widest focus:outline-none focus:border-whatsapp-accent transition`} required />
               <div className="flex items-center justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setShowAddModal(false)} className="px-4 py-2.5 rounded-xl bg-whatsapp-dark text-whatsapp-muted hover:text-white text-sm transition">Batal</button>
+                <button type="button" onClick={() => setShowAddModal(false)} className={`px-4 py-2.5 rounded-xl ${inputBg} opacity-75 hover:opacity-100 text-sm transition`}>Batal</button>
                 <button type="submit" className="px-5 py-2.5 rounded-xl bg-whatsapp-accent hover:bg-emerald-600 text-white font-medium text-sm shadow transition">Tambah</button>
               </div>
             </form>
@@ -1169,26 +1285,26 @@ export default function App() {
       {/* Group Modal */}
       {showGroupModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="w-full max-w-md bg-whatsapp-panel border border-whatsapp-border rounded-2xl shadow-2xl p-6 space-y-6">
-            <h3 className="text-lg font-bold text-whatsapp-text">Grup Obrolan</h3>
+          <div className={`w-full max-w-md ${panelBg} border rounded-2xl shadow-2xl p-6 space-y-6`}>
+            <h3 className="text-lg font-bold">Grup Obrolan</h3>
             {groupError && <div className="p-3 bg-red-900/50 border border-red-500 text-red-200 rounded-lg text-sm">{groupError}</div>}
             
             <form onSubmit={handleCreateGroup} className="space-y-3">
-              <h4 className="text-xs font-semibold text-whatsapp-muted uppercase tracking-wider">Buat Grup Baru</h4>
-              <input type="text" value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Nama Grup" className="w-full px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text text-sm focus:outline-none focus:border-whatsapp-accent transition" required />
+              <h4 className="text-xs font-semibold opacity-70 uppercase tracking-wider">Buat Grup Baru</h4>
+              <input type="text" value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Nama Grup" className={`w-full px-4 py-3 ${inputBg} rounded-xl text-sm focus:outline-none focus:border-whatsapp-accent transition`} required />
               <button type="submit" className="w-full py-2.5 bg-whatsapp-accent hover:bg-emerald-600 text-white font-medium rounded-xl text-sm transition">Buat Grup</button>
             </form>
 
-            <hr className="border-whatsapp-border" />
+            <hr className="opacity-30" />
 
             <form onSubmit={handleJoinGroup} className="space-y-3">
-              <h4 className="text-xs font-semibold text-whatsapp-muted uppercase tracking-wider">Gabung Grup via ID</h4>
-              <input type="text" value={joinGroupId} onChange={(e) => setJoinGroupId(e.target.value)} placeholder="ID Grup (Contoh: GRP-XYZ123)" className="w-full px-4 py-3 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text text-sm uppercase font-mono tracking-wider focus:outline-none focus:border-whatsapp-accent transition" required />
-              <button type="submit" className="w-full py-2.5 bg-whatsapp-dark hover:bg-whatsapp-border text-whatsapp-text font-medium rounded-xl text-sm transition border border-whatsapp-border">Gabung Grup</button>
+              <h4 className="text-xs font-semibold opacity-70 uppercase tracking-wider">Gabung Grup via ID</h4>
+              <input type="text" value={joinGroupId} onChange={(e) => setJoinGroupId(e.target.value)} placeholder="ID Grup (Contoh: GRP-XYZ123)" className={`w-full px-4 py-3 ${inputBg} rounded-xl text-sm uppercase font-mono tracking-wider focus:outline-none focus:border-whatsapp-accent transition`} required />
+              <button type="submit" className={`w-full py-2.5 ${inputBg} hover:opacity-85 font-medium rounded-xl text-sm transition border`}>Gabung Grup</button>
             </form>
 
             <div className="flex justify-end pt-2">
-              <button type="button" onClick={() => setShowGroupModal(false)} className="px-4 py-2 rounded-xl bg-whatsapp-dark text-whatsapp-muted hover:text-white text-sm transition">Tutup</button>
+              <button type="button" onClick={() => setShowGroupModal(false)} className={`px-4 py-2 rounded-xl ${inputBg} opacity-75 hover:opacity-100 text-sm transition`}>Tutup</button>
             </div>
           </div>
         </div>
@@ -1197,18 +1313,18 @@ export default function App() {
       {/* Group Info Modal */}
       {showGroupInfo && selectedGroup && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="w-full max-w-md bg-whatsapp-panel border border-whatsapp-border rounded-2xl shadow-2xl p-6 space-y-4">
+          <div className={`w-full max-w-md ${panelBg} border rounded-2xl shadow-2xl p-6 space-y-4`}>
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold text-whatsapp-text">Info Grup: {selectedGroup.name}</h3>
-              <button onClick={() => setShowGroupInfo(false)} className="text-whatsapp-muted hover:text-white">✕</button>
+              <h3 className="text-lg font-bold">Info Grup: {selectedGroup.name}</h3>
+              <button onClick={() => setShowGroupInfo(false)} className="opacity-70 hover:opacity-100">✕</button>
             </div>
-            <p className="text-xs text-whatsapp-muted font-mono">ID Grup: {selectedGroup.group_id}</p>
+            <p className="text-xs opacity-75 font-mono">ID Grup: {selectedGroup.group_id}</p>
             
             <div>
-              <h4 className="text-xs font-semibold text-whatsapp-muted uppercase tracking-wider mb-2">Anggota Bergabung ({groupMembers.length})</h4>
-              <div className="max-h-40 overflow-y-auto divide-y divide-whatsapp-border/40 bg-whatsapp-dark rounded-xl p-2">
+              <h4 className="text-xs font-semibold opacity-70 uppercase tracking-wider mb-2">Anggota Bergabung ({groupMembers.length})</h4>
+              <div className={`max-h-40 overflow-y-auto divide-y divide-gray-500/20 ${isDarkMode ? 'bg-whatsapp-dark' : 'bg-gray-100'} rounded-xl p-2`}>
                 {groupMembers.map(m => (
-                  <div key={m.user_pin} className="py-2 px-2 flex items-center justify-between text-sm text-whatsapp-text">
+                  <div key={m.user_pin} className="py-2 px-2 flex items-center justify-between text-sm">
                     <span className="flex items-center gap-2">
                       {m.avatar && <img src={m.avatar} alt="" className="w-6 h-6 rounded-full object-cover" />}
                       {m.user_name || 'User'}
@@ -1229,7 +1345,31 @@ export default function App() {
                   <LogOut className="w-4 h-4" /> Keluar Grup
                 </button>
               )}
-              <button onClick={() => setShowGroupInfo(false)} className="px-4 py-2 rounded-xl bg-whatsapp-dark text-whatsapp-muted hover:text-white text-sm transition">Tutup</button>
+              <button onClick={() => setShowGroupInfo(false)} className={`px-4 py-2 rounded-xl ${inputBg} opacity-75 hover:opacity-100 text-sm transition`}>Tutup</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* About App Info Modal */}
+      {showAboutModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className={`w-full max-w-sm ${panelBg} border rounded-2xl shadow-2xl p-6 text-center space-y-4`}>
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-whatsapp-accent rounded-full text-white mb-1 shadow-lg">
+              <Shield className="w-8 h-8" />
+            </div>
+            <h3 className="text-xl font-bold">PIN Chat</h3>
+            <p className="text-xs opacity-70 font-mono">Versi Aplikasi: v1.9 (Stable)</p>
+            <p className="text-xs opacity-80 leading-relaxed">
+              Aplikasi perpesanan privat berbasis PIN unik dengan enkripsi real-time dan tema modern.
+            </p>
+            <div className="pt-2">
+              <a href="https://www.instagram.com/ardaeko.developer/" target="_blank" rel="noopener noreferrer" className="text-whatsapp-accent hover:underline text-xs inline-flex items-center gap-1 font-semibold">
+                Develope by @ardaeko <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+            <div className="pt-4">
+              <button onClick={() => setShowAboutModal(false)} className="w-full py-2.5 rounded-xl bg-whatsapp-accent text-white hover:bg-emerald-600 text-sm font-medium transition">Tutup</button>
             </div>
           </div>
         </div>
@@ -1238,30 +1378,30 @@ export default function App() {
       {/* Settings Modal */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="w-full max-w-md bg-whatsapp-panel border border-whatsapp-border rounded-2xl shadow-2xl p-6 space-y-6">
-            <h3 className="text-lg font-bold text-whatsapp-text">Pengaturan Aplikasi</h3>
+          <div className={`w-full max-w-md ${panelBg} border rounded-2xl shadow-2xl p-6 space-y-6`}>
+            <h3 className="text-lg font-bold">Pengaturan Aplikasi</h3>
             
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <h4 className="text-sm font-medium text-whatsapp-text">Notifikasi Audio & Getar</h4>
-                  <p className="text-xs text-whatsapp-muted">Bunyikan suara saat pesan baru</p>
+                  <h4 className="text-sm font-medium">Notifikasi Audio & Getar</h4>
+                  <p className="text-xs opacity-70">Bunyikan suara saat pesan baru</p>
                 </div>
-                <input type="checkbox" checked={notificationsEnabled} onChange={(e) => updateSettings(e.target.checked, undefined, undefined)} className="w-5 h-5 accent-whatsapp-accent cursor-pointer" />
+                <input type="checkbox" checked={notificationsEnabled} onChange={(e) => updateSettings(e.target.checked, undefined, undefined, undefined)} className="w-5 h-5 accent-whatsapp-accent cursor-pointer" />
               </div>
 
-              <div className="border-t border-whatsapp-border pt-4">
+              <div className="border-t border-gray-500/30 pt-4">
                 <div className="flex items-center justify-between mb-3">
                   <div>
-                    <h4 className="text-sm font-medium text-whatsapp-text">Kunci Keamanan App (PIN)</h4>
-                    <p className="text-xs text-whatsapp-muted">Lindungi aplikasi dengan PIN sandi</p>
+                    <h4 className="text-sm font-medium">Kunci Keamanan App (PIN)</h4>
+                    <p className="text-xs opacity-70">Lindungi aplikasi dengan PIN sandi</p>
                   </div>
-                  <input type="checkbox" checked={appLockEnabled} onChange={(e) => { const enabled = e.target.checked; if (!enabled) updateSettings(undefined, false, ''); else updateSettings(undefined, true, newPasscode || '1234'); }} className="w-5 h-5 accent-whatsapp-accent cursor-pointer" />
+                  <input type="checkbox" checked={appLockEnabled} onChange={(e) => { const enabled = e.target.checked; if (!enabled) updateSettings(undefined, false, '', undefined); else updateSettings(undefined, true, newPasscode || '1234', undefined); }} className="w-5 h-5 accent-whatsapp-accent cursor-pointer" />
                 </div>
                 {appLockEnabled && (
                   <div>
-                    <label className="block text-xs text-whatsapp-muted mb-1">Set PIN Keamanan Baru (4-6 digit)</label>
-                    <input type="password" maxLength={6} value={newPasscode} onChange={(e) => { setNewPasscode(e.target.value); updateSettings(undefined, true, e.target.value); }} placeholder="Contoh: 1234" className="w-full px-3 py-2 bg-whatsapp-dark border border-whatsapp-border rounded-xl text-whatsapp-text text-sm focus:outline-none focus:border-whatsapp-accent" />
+                    <label className="block text-xs opacity-70 mb-1">Set PIN Keamanan Baru (4-6 digit)</label>
+                    <input type="password" maxLength={6} value={newPasscode} onChange={(e) => { setNewPasscode(e.target.value); updateSettings(undefined, true, e.target.value, undefined); }} placeholder="Contoh: 1234" className={`w-full px-3 py-2 ${inputBg} rounded-xl text-sm focus:outline-none focus:border-whatsapp-accent`} />
                   </div>
                 )}
               </div>
