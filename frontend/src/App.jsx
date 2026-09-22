@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { App as CapApp } from '@capacitor/app';
 import { getSupabase } from './supabaseClient';
+import { LocalNotifications } from '@capacitor/local-notifications';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -87,6 +88,7 @@ export default function App() {
 
   // Initialize session & theme
   useEffect(() => {
+    LocalNotifications.requestPermissions();
     try {
       const savedUser = localStorage.getItem('schatpin_chat_user_v9');
       const settings = JSON.parse(localStorage.getItem('schatpin_settings_v9') || '{}');
@@ -256,7 +258,7 @@ export default function App() {
             playPersonalSound();
             fetchUnreadCounts();
             if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-              new Notification('Pesan Baru - PIN Chat v2.0.1', { body: newMsg.message });
+              new Notification('Pesan Baru - PIN Chat v2.1', { body: newMsg.message });
             }
           }
         }
@@ -290,6 +292,16 @@ export default function App() {
           } else if (newMsg.sender_pin !== user.pin) {
             playGroupSound();
             fetchUnreadCounts();
+            try {
+              LocalNotifications.schedule({
+                notifications: [{
+                  title: `PIN Chat v2.1 - Pesan Grup (${newMsg.sender_name || 'Grup'})`,
+                  body: newMsg.message,
+                  id: Date.now(),
+                  sound: 'default'
+                }]
+              });
+            } catch (e) {}
           }
         }
       )
@@ -927,7 +939,7 @@ export default function App() {
             <div className="inline-flex items-center justify-center w-16 h-16 bg-whatsapp-accent rounded-full text-white mb-4 shadow-lg">
               <Shield className="w-8 h-8" />
             </div>
-            <h1 className="text-2xl font-bold">PIN Chat v2.0.1</h1>
+            <h1 className="text-2xl font-bold">PIN Chat v2.1</h1>
             <p className="text-sm mt-1 opacity-70">Chat aman dengan perlindungan kata sandi</p>
           </div>
 
@@ -1002,6 +1014,7 @@ export default function App() {
             </div>
           </div>
           <div className="flex items-center gap-1">
+            <button onClick={() => setShowAddModal(true)} className="p-2 opacity-70 hover:opacity-100 rounded-full transition" title="Tambah Kontak"><UserPlus className="w-5 h-5" /></button>
             <button onClick={() => setShowGroupModal(true)} className="p-2 opacity-70 hover:opacity-100 rounded-full transition" title="Grup Chat"><Users className="w-5 h-5" /></button>
             <button onClick={() => setShowSettings(true)} className="p-2 opacity-70 hover:opacity-100 rounded-full transition" title="Pengaturan"><Settings className="w-5 h-5" /></button>
             <button onClick={handleLogout} className="p-2 opacity-70 hover:opacity-100 text-red-400 rounded-full transition" title="Keluar"><LogOut className="w-5 h-5" /></button>
@@ -1143,7 +1156,7 @@ export default function App() {
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               <div className="flex justify-center my-2">
                 <span className={`px-3 py-1 ${panelBg} text-xs rounded-lg shadow border flex items-center gap-1.5 opacity-90`}>
-                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> PIN Chat v2.0.1 • Sempurna & Stabil
+                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> PIN Chat v2.1 • Sempurna & Stabil
                 </span>
               </div>
 
@@ -1220,7 +1233,7 @@ export default function App() {
             <div className={`w-20 h-20 ${panelBg} rounded-full flex items-center justify-center mb-4 border shadow`}>
               <MessageSquare className="w-10 h-10 text-whatsapp-accent" />
             </div>
-            <h2 className="text-xl font-bold mb-1">PIN Chat v2.0.1</h2>
+            <h2 className="text-xl font-bold mb-1">PIN Chat v2.1</h2>
             <p className="text-sm max-w-sm">Pilih kontak atau grup di sebelah kiri untuk mulai mengobrol.</p>
           </div>
         )}
@@ -1360,7 +1373,7 @@ export default function App() {
               </div>
 
               <div className="border-t border-gray-500/30 pt-4 text-center">
-                <p className="text-sm font-semibold mb-1">PIN Chat v2.0.1</p>
+                <p className="text-sm font-semibold mb-1">PIN Chat v2.1</p>
                 <p className="text-xs opacity-70 mb-2">(Stable Release)</p>
                 <a href="https://www.instagram.com/ardaeko.developer/" target="_blank" rel="noopener noreferrer" className="text-whatsapp-accent hover:underline text-xs inline-flex items-center gap-1 font-semibold">
                   Develope by @ardaeko <ExternalLink className="w-3 h-3" />
