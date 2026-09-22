@@ -110,6 +110,7 @@ export default function App() {
       if (savedUser) {
         const userData = JSON.parse(savedUser);
         if (userData && userData.pin) {
+          setUser(userData);
           verifyUser(userData.pin);
         }
       }
@@ -131,11 +132,9 @@ export default function App() {
       if (data && !error) {
         setUser(data);
         localStorage.setItem('schatpin_chat_user_v9', JSON.stringify(data));
-      } else {
-        localStorage.removeItem('schatpin_chat_user_v9');
       }
     } catch (err) {
-      console.error('Failed to verify user', err);
+      console.error('Failed to verify user, retaining local session', err);
     }
   };
 
@@ -258,7 +257,7 @@ export default function App() {
             playPersonalSound();
             fetchUnreadCounts();
             if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-              new Notification('Pesan Baru - PIN Chat v2.1', { body: newMsg.message });
+              new Notification('Pesan Baru - PIN Chat v2.2', { body: newMsg.message });
             }
           }
         }
@@ -295,7 +294,7 @@ export default function App() {
             try {
               LocalNotifications.schedule({
                 notifications: [{
-                  title: `PIN Chat v2.1 - Pesan Grup (${newMsg.sender_name || 'Grup'})`,
+                  title: `PIN Chat v2.2 - Pesan Grup (${newMsg.sender_name || 'Grup'})`,
                   body: newMsg.message,
                   id: Date.now(),
                   sound: 'default'
@@ -762,7 +761,10 @@ export default function App() {
 
       if (uErr || !targetUser) throw new Error('PIN kontak tidak ditemukan!');
 
-      await supabase.from('schatpin_contacts').insert([{ user_pin: user.pin, contact_pin: cleanContactPin }]);
+      await supabase.from('schatpin_contacts').upsert([
+        { user_pin: user.pin, contact_pin: cleanContactPin },
+        { user_pin: cleanContactPin, contact_pin: user.pin }
+      ], { onConflict: 'user_pin,contact_pin', ignoreDuplicates: true });
       await fetchContacts();
       setNewContactPin('');
       setShowAddModal(false);
@@ -939,7 +941,7 @@ export default function App() {
             <div className="inline-flex items-center justify-center w-16 h-16 bg-whatsapp-accent rounded-full text-white mb-4 shadow-lg">
               <Shield className="w-8 h-8" />
             </div>
-            <h1 className="text-2xl font-bold">PIN Chat v2.1</h1>
+            <h1 className="text-2xl font-bold">PIN Chat v2.2</h1>
             <p className="text-sm mt-1 opacity-70">Chat aman dengan perlindungan kata sandi</p>
           </div>
 
@@ -1156,7 +1158,7 @@ export default function App() {
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               <div className="flex justify-center my-2">
                 <span className={`px-3 py-1 ${panelBg} text-xs rounded-lg shadow border flex items-center gap-1.5 opacity-90`}>
-                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> PIN Chat v2.1 • Sempurna & Stabil
+                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> PIN Chat v2.2 • Sempurna & Stabil
                 </span>
               </div>
 
@@ -1233,7 +1235,7 @@ export default function App() {
             <div className={`w-20 h-20 ${panelBg} rounded-full flex items-center justify-center mb-4 border shadow`}>
               <MessageSquare className="w-10 h-10 text-whatsapp-accent" />
             </div>
-            <h2 className="text-xl font-bold mb-1">PIN Chat v2.1</h2>
+            <h2 className="text-xl font-bold mb-1">PIN Chat v2.2</h2>
             <p className="text-sm max-w-sm">Pilih kontak atau grup di sebelah kiri untuk mulai mengobrol.</p>
           </div>
         )}
@@ -1373,7 +1375,7 @@ export default function App() {
               </div>
 
               <div className="border-t border-gray-500/30 pt-4 text-center">
-                <p className="text-sm font-semibold mb-1">PIN Chat v2.1</p>
+                <p className="text-sm font-semibold mb-1">PIN Chat v2.2</p>
                 <p className="text-xs opacity-70 mb-2">(Stable Release)</p>
                 <a href="https://www.instagram.com/ardaeko.developer/" target="_blank" rel="noopener noreferrer" className="text-whatsapp-accent hover:underline text-xs inline-flex items-center gap-1 font-semibold">
                   Develope by @ardaeko <ExternalLink className="w-3 h-3" />
