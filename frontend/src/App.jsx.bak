@@ -29,6 +29,7 @@ export default function App() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [appLockEnabled, setAppLockEnabled] = useState(false);
   const [newPasscode, setNewPasscode] = useState('');
+  const [showAboutModal, setShowAboutModal] = useState(false);
 
   // Chat state
   const [activeTab, setActiveTab] = useState('chats'); // 'chats' or 'groups'
@@ -69,12 +70,12 @@ export default function App() {
         setSelectedContact(null);
         setSelectedGroup(null);
         setShowGroupInfo(false);
-      } else if (showSettings || showAddModal || showGroupModal || showGroupInfo) {
+      } else if (showSettings || showAddModal || showGroupModal || showGroupInfo || showAboutModal) {
         setShowSettings(false);
         setShowAddModal(false);
         setShowGroupModal(false);
         setShowGroupInfo(false);
-        
+        setShowAboutModal(false);
       } else {
         CapApp.exitApp();
       }
@@ -83,7 +84,7 @@ export default function App() {
     return () => {
       backListener.then(listener => listener.remove());
     };
-  }, [selectedContact, selectedGroup, showSettings, showAddModal, showGroupModal, showGroupInfo]);
+  }, [selectedContact, selectedGroup, showSettings, showAddModal, showGroupModal, showGroupInfo, showAboutModal]);
 
   // Initialize session & theme
   useEffect(() => {
@@ -256,7 +257,7 @@ export default function App() {
             playPersonalSound();
             fetchUnreadCounts();
             if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-              new Notification('Pesan Baru - PIN Chat v2.0', { body: newMsg.message });
+              new Notification('Pesan Baru - PIN Chat v1.9', { body: newMsg.message });
             }
           }
         }
@@ -631,21 +632,6 @@ export default function App() {
     if (selectedGroup) fetchGroupMessages();
   }, [selectedGroup]);
 
-  // Reset group unread when group chat is opened
-  useEffect(() => {
-    if (!selectedGroup) return;
-    const markGroupUnreadAsRead = async () => {
-      const supabase = getSupabase();
-      await supabase
-        .from('schatpin_group_messages')
-        .update({ is_read: true })
-        .eq('group_id', selectedGroup.group_id);
-      fetchGroupMessages();
-      fetchUnreadCounts();
-    };
-    markGroupUnreadAsRead();
-  }, [selectedGroup]);
-
   const handleTypingInput = (e) => {
     setMessageInput(e.target.value);
     if (!selectedContact) return;
@@ -710,6 +696,62 @@ export default function App() {
   };
 
   // Robust Image Sending with Canvas Compression
+  const handleImageSend = async (e) => {
+    const file = e.target.files[0];
+    if (!file || (!selectedContact && !selectedGroup)) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = async () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        const maxDim = 400;
+
+        if (width > height && width > maxDim) {
+          height *= maxDim / width;
+          width = maxDim;
+        } else if (height > maxDim) {
+          width *= maxDim / height;
+          height = maxDim;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.5);
+
+        const supabase = getSupabase();
+        const mediaNotice = "[Foto Dikirim]";
+
+        try {
+          if (selectedContact) {
+            const { data, error } = await supabase
+              .from('schatpin_messages')
+              .insert([{ sender_pin: user.pin, receiver_pin: selectedContact.contact_pin, message: mediaNotice, media_url: compressedBase64, media_type: 'image', is_read: false }])
+              .select()
+              .single();
+            if (error) console.error('Image insert error:', error);
+            if (data) setMessages(prev => [...prev, data]);
+          } else if (selectedGroup) {
+            const { data, error } = await supabase
+              .from('schatpin_group_messages')
+              .insert([{ group_id: selectedGroup.group_id, sender_pin: user.pin, sender_name: user.name, message: mediaNotice, media_url: compressedBase64, media_type: 'image' }])
+              .select()
+              .single();
+            if (error) console.error('Group image insert error:', error);
+            if (data) setGroupMessages(prev => [...prev, data]);
+          }
+        } catch (err) {
+          console.error('Image send catch error:', err);
+        }
+      };
+      img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
 
   const handleAddContact = async (e) => {
     e.preventDefault();
@@ -912,7 +954,7 @@ export default function App() {
             <div className="inline-flex items-center justify-center w-16 h-16 bg-whatsapp-accent rounded-full text-white mb-4 shadow-lg">
               <Shield className="w-8 h-8" />
             </div>
-            <h1 className="text-2xl font-bold">PIN Chat v2.0</h1>
+            <h1 className="text-2xl font-bold">PIN Chat v1.9</h1>
             <p className="text-sm mt-1 opacity-70">Chat aman dengan perlindungan kata sandi</p>
           </div>
 
@@ -926,437 +968,3 @@ export default function App() {
           {authMode === 'register' ? (
             <form onSubmit={handleRegister} className="space-y-4">
               <div>
-                <label className="block text-xs font-medium uppercase tracking-wider mb-1 opacity-70">Nama Kamu</label>
-                <input type="text" value={inputName} onChange={(e) => setInputName(e.target.value)} placeholder="Contoh: Arda Eko" className={`w-full px-4 py-3 ${inputBg} rounded-xl focus:outline-none focus:border-whatsapp-accent transition`} required />
-              </div>
-              <div>
-                <label className="block text-xs font-medium uppercase tracking-wider mb-1 opacity-70">Kata Sandi Rahasia</label>
-                <input type="password" value={inputPassword} onChange={(e) => setInputPassword(e.target.value)} placeholder="Kata sandi akun" className={`w-full px-4 py-3 ${inputBg} rounded-xl focus:outline-none focus:border-whatsapp-accent transition`} required />
-              </div>
-              <button type="submit" className="w-full py-3 bg-whatsapp-accent hover:bg-emerald-600 text-white font-medium rounded-xl shadow-lg transition flex items-center justify-center gap-2">Buat PIN & Masuk</button>
-            </form>
-          ) : (
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium uppercase tracking-wider mb-1 opacity-70">PIN Kamu</label>
-                <input type="text" value={inputPin} onChange={(e) => setInputPin(e.target.value)} placeholder="Contoh: PIN7A8B2" className={`w-full px-4 py-3 ${inputBg} rounded-xl uppercase font-mono tracking-widest focus:outline-none focus:border-whatsapp-accent transition`} required />
-              </div>
-              <div>
-                <label className="block text-xs font-medium uppercase tracking-wider mb-1 opacity-70">Kata Sandi</label>
-                <input type="password" value={inputPassword} onChange={(e) => setInputPassword(e.target.value)} placeholder="Kata sandi akun" className={`w-full px-4 py-3 ${inputBg} rounded-xl focus:outline-none focus:border-whatsapp-accent transition`} required />
-              </div>
-              <button type="submit" className="w-full py-3 bg-whatsapp-accent hover:bg-emerald-600 text-white font-medium rounded-xl shadow-lg transition flex items-center justify-center gap-2">Masuk Chat</button>
-            </form>
-          )}
-
-          {/* Watermark Footer */}
-          <div className="mt-8 text-center text-xs opacity-60">
-            <a href="https://www.instagram.com/ardaeko.developer/" target="_blank" rel="noopener noreferrer" className="hover:text-whatsapp-accent transition inline-flex items-center gap-1">
-              Chat Pin | Develope by @ardaeko <ExternalLink className="w-3 h-3" />
-            </a>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const filteredContacts = contacts.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()) || c.contact_pin.toLowerCase().includes(searchQuery.toLowerCase()));
-  const filteredGroups = groups.filter(g => g.name.toLowerCase().includes(searchQuery.toLowerCase()));
-
-  return (
-    <div className={`flex h-screen w-screen ${themeBg} overflow-hidden`}>
-      {/* Sidebar */}
-      <div className={`w-full md:w-96 flex flex-col ${panelBg} border-r ${(selectedContact || selectedGroup) ? 'hidden md:flex' : 'flex'}`}>
-        <div className={`flex items-center justify-between px-4 py-3 ${panelBg} border-b`}>
-          <div className="flex items-center gap-3">
-            <div className="relative group cursor-pointer" title="Ubah Foto Profil">
-              <img src={user.avatar} alt={user.name} className="w-10 h-10 rounded-full bg-whatsapp-dark border object-cover" />
-              <label className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition cursor-pointer">
-                <Camera className="w-4 h-4 text-white" />
-                <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
-              </label>
-            </div>
-            <div>
-              <h2 className="font-semibold text-sm">{user.name}</h2>
-              <div className="flex items-center gap-1.5 text-xs text-whatsapp-accent font-mono">
-                <span>{user.pin}</span>
-                <button onClick={copyPin} title="Salin PIN" className="opacity-70 hover:opacity-100 transition">
-                  {copied ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-1">
-            <button onClick={() => setShowGroupModal(true)} className="p-2 opacity-70 hover:opacity-100 rounded-full transition" title="Grup Chat"><Users className="w-5 h-5" /></button>
-            <button onClick={() => setShowSettings(true)} className="p-2 opacity-70 hover:opacity-100 rounded-full transition" title="Pengaturan"><Settings className="w-5 h-5" /></button>
-            <button onClick={handleLogout} className="p-2 opacity-70 hover:opacity-100 text-red-400 rounded-full transition" title="Keluar"><LogOut className="w-5 h-5" /></button>
-          </div>
-        </div>
-
-        {/* Tabs */}
-        <div className={`flex border-b ${isDarkMode ? 'bg-whatsapp-dark/50' : 'bg-gray-100'}`}>
-          <button onClick={() => setActiveTab('chats')} className={`flex-1 py-2 text-xs font-semibold uppercase tracking-wider transition ${activeTab === 'chats' ? 'text-whatsapp-accent border-b-2 border-whatsapp-accent' : 'opacity-60 hover:opacity-100'}`}>Personal</button>
-          <button onClick={() => setActiveTab('groups')} className={`flex-1 py-2 text-xs font-semibold uppercase tracking-wider transition ${activeTab === 'groups' ? 'text-whatsapp-accent border-b-2 border-whatsapp-accent' : 'opacity-60 hover:opacity-100'}`}>Grup ({groups.length})</button>
-        </div>
-
-        {/* Search */}
-        <div className={`p-3 border-b ${isDarkMode ? 'bg-whatsapp-dark/40' : 'bg-gray-50'}`}>
-          <div className={`flex items-center gap-2 px-3 py-2 ${inputBg} rounded-xl border`}>
-            <Search className="w-4 h-4 opacity-60" />
-            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Cari..." className="w-full bg-transparent text-sm focus:outline-none" />
-          </div>
-        </div>
-
-        {/* List */}
-        <div className="flex-1 overflow-y-auto divide-y divide-gray-500/20">
-          {activeTab === 'chats' ? (
-            filteredContacts.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-64 text-center p-6 opacity-60">
-                <MessageSquare className="w-12 h-12 mb-2" />
-                <p className="text-sm">Belum ada kontak.</p>
-              </div>
-            ) : (
-              filteredContacts.map(contact => {
-                const unreadCount = unreadCounts[contact.contact_pin] || 0;
-                return (
-                  <div key={contact.contact_pin} onClick={() => { setSelectedContact(contact); setSelectedGroup(null); }} className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition hover:opacity-80 ${selectedContact?.contact_pin === contact.contact_pin ? (isDarkMode ? 'bg-whatsapp-dark/80' : 'bg-gray-200') : ''}`}>
-                    <img src={contact.avatar} alt={contact.name} className="w-12 h-12 rounded-full bg-whatsapp-dark border object-cover" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between mb-0.5">
-                        <h3 className="font-semibold text-sm truncate">{contact.name}</h3>
-                        <span className="text-xs opacity-60 font-mono">{contact.contact_pin}</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <p className="text-xs opacity-60 truncate">Ketuk untuk chat</p>
-                        {unreadCount > 0 && (
-                          <span className="px-2 py-0.5 bg-whatsapp-accent text-white font-bold text-[10px] rounded-full shadow">
-                            {unreadCount}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            )
-          ) : (
-            filteredGroups.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-64 text-center p-6 opacity-60">
-                <Users className="w-12 h-12 mb-2" />
-                <p className="text-sm">Belum ada grup.</p>
-              </div>
-            ) : (
-              filteredGroups.map(group => {
-                const gUnread = groupUnreadCounts[group.group_id] || 0;
-                return (
-                  <div key={group.group_id} onClick={() => { setSelectedGroup(group); setSelectedContact(null); }} className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition hover:opacity-80 ${selectedGroup?.group_id === group.group_id ? (isDarkMode ? 'bg-whatsapp-dark/80' : 'bg-gray-200') : ''}`}>
-                    <img src={group.avatar} alt={group.name} className="w-12 h-12 rounded-full bg-whatsapp-dark border object-cover" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between mb-0.5">
-                        <h3 className="font-semibold text-sm truncate">{group.name}</h3>
-                        <span className="text-xs text-whatsapp-accent font-mono">{group.group_id}</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <p className="text-xs opacity-60 truncate">Grup Obrolan</p>
-                        {gUnread > 0 && (
-                          <span className="px-2 py-0.5 bg-whatsapp-accent text-white font-bold text-[10px] rounded-full shadow">
-                            {gUnread}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            )
-          )}
-        </div>
-
-        {/* Watermark Footer */}
-        <div className={`p-2 text-center text-[11px] border-t opacity-75 ${isDarkMode ? 'bg-whatsapp-panel border-whatsapp-border' : 'bg-white border-gray-200'}`}>
-          <a href="https://www.instagram.com/ardaeko.developer/" target="_blank" rel="noopener noreferrer" className="hover:text-whatsapp-accent transition inline-flex items-center gap-1">
-            Chat Pin | Develope by @ardaeko <ExternalLink className="w-3 h-3" />
-          </a>
-        </div>
-      </div>
-
-      {/* Main Chat */}
-      <div className={`flex-1 flex flex-col ${chatBg} ${(!selectedContact && !selectedGroup) ? 'hidden md:flex' : 'flex'}`}>
-        {(selectedContact || selectedGroup) ? (
-          <>
-            {/* Header */}
-            <div className={`flex items-center justify-between px-4 py-3 ${panelBg} border-b shadow-sm`}>
-              <div className="flex items-center gap-3">
-                <button onClick={() => { setSelectedContact(null); setSelectedGroup(null); setShowGroupInfo(false); }} className="md:hidden p-1.5 opacity-70 hover:opacity-100 rounded-full transition"><ChevronLeft className="w-6 h-6" /></button>
-                <div className="relative group cursor-pointer">
-                  <img src={selectedContact ? selectedContact.avatar : selectedGroup.avatar} alt="Avatar" className="w-10 h-10 rounded-full bg-whatsapp-dark border object-cover" />
-                  {selectedGroup && selectedGroup.admin_pin === user.pin && (
-                    <label className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition cursor-pointer" title="Ganti Foto Grup">
-                      <Camera className="w-4 h-4 text-white" />
-                      <input type="file" accept="image/*" onChange={(e) => handleGroupAvatarUpload(e, selectedGroup)} className="hidden" />
-                    </label>
-                  )}
-                </div>
-                <div>
-                  <h3 className="font-semibold text-sm">{selectedContact ? selectedContact.name : selectedGroup.name}</h3>
-                  <p className="text-xs opacity-75 font-mono">
-                    {selectedContact ? `PIN: ${selectedContact.contact_pin}` : `ID Grup: ${selectedGroup.group_id}`}
-                    {typingUser && <span className="text-whatsapp-accent ml-2 italic">({typingUser} sedang mengetik...)</span>}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-1">
-                {selectedContact && (
-                  <>
-                    <button onClick={handleClearChat} className="p-2 opacity-70 hover:opacity-100 text-amber-400 rounded-full transition" title="Hapus Riwayat Chat">
-                      <Trash2 className="w-5 h-5" />
-                    </button>
-                    <button onClick={handleUnfriend} className="p-2 opacity-70 hover:opacity-100 text-red-400 rounded-full transition" title="Hapus Pertemanan (Unfriend)">
-                      <UserX className="w-5 h-5" />
-                    </button>
-                  </>
-                )}
-                {selectedGroup && (
-                  <button onClick={() => fetchGroupMembers(selectedGroup.group_id)} className="p-2 opacity-70 hover:opacity-100 rounded-full transition" title="Info Grup">
-                    <Info className="w-5 h-5" />
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              <div className="flex justify-center my-2">
-                <span className={`px-3 py-1 ${panelBg} text-xs rounded-lg shadow border flex items-center gap-1.5 opacity-90`}>
-                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> PIN Chat v2.0 • Sempurna & Stabil
-                </span>
-              </div>
-
-              {selectedContact ? (
-                messages.map((msg, index) => {
-                  const isMe = msg.sender_pin === user.pin;
-                  return (
-                    <div key={msg.id || index} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[75%] md:max-w-md rounded-2xl px-4 py-2 shadow text-sm ${isMe ? outgoingBg + ' rounded-tr-none' : incomingBg + ' rounded-tl-none border'}`}>
-                        {msg.media_url && (
-                          <div className="mb-2">
-                            <img src={msg.media_url} alt="Media" className="rounded-xl max-h-64 object-cover w-full" />
-                            <a href={msg.media_url} download="schatpin_media.jpg" className="flex items-center gap-1 text-xs text-whatsapp-accent mt-1 hover:underline">
-                              <Download className="w-3 h-3" /> Download Gambar
-                            </a>
-                          </div>
-                        )}
-                        <p className="break-words whitespace-pre-wrap leading-relaxed">{msg.message}</p>
-                        <div className={`flex items-center justify-end gap-1 mt-1 text-[10px] ${isMe ? 'opacity-80' : 'opacity-60'}`}>
-                          <span>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                          {isMe && (
-                            <span className={msg.is_read ? 'text-blue-400 font-bold' : ''}>
-                              {msg.is_read ? <CheckCheck className="w-3.5 h-3.5 text-blue-400 inline" /> : <Check className="w-3.5 h-3.5 inline" />}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
-                groupMessages.map((msg, index) => {
-                  const isMe = msg.sender_pin === user.pin;
-                  return (
-                    <div key={msg.id || index} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[75%] md:max-w-md rounded-2xl px-4 py-2 shadow text-sm ${isMe ? outgoingBg + ' rounded-tr-none' : incomingBg + ' rounded-tl-none border'}`}>
-                        {!isMe && <p className="text-xs font-semibold text-whatsapp-accent mb-0.5">{msg.sender_name}</p>}
-                        {msg.media_url && (
-                          <div className="mb-2">
-                            <img src={msg.media_url} alt="Media" className="rounded-xl max-h-64 object-cover w-full" />
-                            <a href={msg.media_url} download="schatpin_media.jpg" className="flex items-center gap-1 text-xs text-whatsapp-accent mt-1 hover:underline">
-                              <Download className="w-3 h-3" /> Download Gambar
-                            </a>
-                          </div>
-                        )}
-                        <p className="break-words whitespace-pre-wrap leading-relaxed">{msg.message}</p>
-                        <div className="flex items-center justify-end gap-1 mt-1 text-[10px] opacity-60">
-                          <span>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-
-            {/* Footer Input */}
-            <form onSubmit={sendMessage} className={`px-4 py-3 ${panelBg} border-t flex items-center gap-3`}>
-                value={messageInput}
-                onChange={handleTypingInput}
-                placeholder="Ketik pesan..."
-                className={`flex-1 px-4 py-3 ${inputBg} rounded-xl text-sm focus:outline-none focus:border-whatsapp-accent transition`}
-              />
-              <button type="submit" disabled={!messageInput?.trim()} className={`p-3 rounded-xl bg-whatsapp-accent text-white shadow transition flex items-center justify-center ${!messageInput?.trim() ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-600'}`}>
-                <Send className="w-5 h-5" />
-              </button>
-            </form>
-          </>
-        ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-center p-8 opacity-60">
-            <div className={`w-20 h-20 ${panelBg} rounded-full flex items-center justify-center mb-4 border shadow`}>
-              <MessageSquare className="w-10 h-10 text-whatsapp-accent" />
-            </div>
-            <h2 className="text-xl font-bold mb-1">PIN Chat v2.0</h2>
-            <p className="text-sm max-w-sm">Pilih kontak atau grup di sebelah kiri untuk mulai mengobrol.</p>
-          </div>
-        )}
-      </div>
-
-      {/* Add Contact Modal */}
-      {showAddModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className={`w-full max-w-md ${panelBg} border rounded-2xl shadow-2xl p-6`}>
-            <h3 className="text-lg font-bold mb-2">Tambah Kontak Baru</h3>
-            <p className="text-xs opacity-75 mb-4">Masukkan PIN teman kamu untuk menambahkannya.</p>
-            {addError && <div className="mb-4 p-3 bg-red-900/50 border border-red-500 text-red-200 rounded-lg text-sm">{addError}</div>}
-            <form onSubmit={handleAddContact} className="space-y-4">
-              <input type="text" value={newContactPin} onChange={(e) => setNewContactPin(e.target.value)} placeholder="Contoh: PIN3B2A1" className={`w-full px-4 py-3 ${inputBg} rounded-xl uppercase font-mono tracking-widest focus:outline-none focus:border-whatsapp-accent transition`} required />
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setShowAddModal(false)} className={`px-4 py-2.5 rounded-xl ${inputBg} opacity-75 hover:opacity-100 text-sm transition`}>Batal</button>
-                <button type="submit" className="px-5 py-2.5 rounded-xl bg-whatsapp-accent hover:bg-emerald-600 text-white font-medium text-sm shadow transition">Tambah</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Group Modal */}
-      {showGroupModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className={`w-full max-w-md ${panelBg} border rounded-2xl shadow-2xl p-6 space-y-6`}>
-            <h3 className="text-lg font-bold">Grup Obrolan</h3>
-            {groupError && <div className="p-3 bg-red-900/50 border border-red-500 text-red-200 rounded-lg text-sm">{groupError}</div>}
-            
-            <form onSubmit={handleCreateGroup} className="space-y-3">
-              <h4 className="text-xs font-semibold opacity-70 uppercase tracking-wider">Buat Grup Baru</h4>
-              <input type="text" value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Nama Grup" className={`w-full px-4 py-3 ${inputBg} rounded-xl text-sm focus:outline-none focus:border-whatsapp-accent transition`} required />
-              <button type="submit" className="w-full py-2.5 bg-whatsapp-accent hover:bg-emerald-600 text-white font-medium rounded-xl text-sm transition">Buat Grup</button>
-            </form>
-
-            <hr className="opacity-30" />
-
-            <form onSubmit={handleJoinGroup} className="space-y-3">
-              <h4 className="text-xs font-semibold opacity-70 uppercase tracking-wider">Gabung Grup via ID</h4>
-              <input type="text" value={joinGroupId} onChange={(e) => setJoinGroupId(e.target.value)} placeholder="ID Grup (Contoh: GRP-XYZ123)" className={`w-full px-4 py-3 ${inputBg} rounded-xl text-sm uppercase font-mono tracking-wider focus:outline-none focus:border-whatsapp-accent transition`} required />
-              <button type="submit" className={`w-full py-2.5 ${inputBg} hover:opacity-85 font-medium rounded-xl text-sm transition border`}>Gabung Grup</button>
-            </form>
-
-            <div className="flex justify-end pt-2">
-              <button type="button" onClick={() => setShowGroupModal(false)} className={`px-4 py-2 rounded-xl ${inputBg} opacity-75 hover:opacity-100 text-sm transition`}>Tutup</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Group Info Modal */}
-      {showGroupInfo && selectedGroup && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className={`w-full max-w-md ${panelBg} border rounded-2xl shadow-2xl p-6 space-y-4`}>
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold">Info Grup: {selectedGroup.name}</h3>
-              <button onClick={() => setShowGroupInfo(false)} className="opacity-70 hover:opacity-100">✕</button>
-            </div>
-            <p className="text-xs opacity-75 font-mono">ID Grup: {selectedGroup.group_id}</p>
-            
-            <div>
-              <h4 className="text-xs font-semibold opacity-70 uppercase tracking-wider mb-2">Anggota Bergabung ({groupMembers.length})</h4>
-              <div className={`max-h-40 overflow-y-auto divide-y divide-gray-500/20 ${isDarkMode ? 'bg-whatsapp-dark' : 'bg-gray-100'} rounded-xl p-2`}>
-                {groupMembers.map(m => (
-                  <div key={m.user_pin} className="py-2 px-2 flex items-center justify-between text-sm">
-                    <span className="flex items-center gap-2">
-                      {m.avatar && <img src={m.avatar} alt="" className="w-6 h-6 rounded-full object-cover" />}
-                      {m.user_name || 'User'}
-                    </span>
-                    <span className="text-xs font-mono text-whatsapp-accent">{m.user_pin}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="pt-2 flex items-center justify-between">
-              {selectedGroup.admin_pin === user.pin ? (
-                <button onClick={() => handleDeleteGroup(selectedGroup.group_id)} className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition flex items-center gap-1">
-                  <Trash2 className="w-4 h-4" /> Hapus Grup
-                </button>
-              ) : (
-                <button onClick={() => handleLeaveGroup(selectedGroup.group_id)} className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition flex items-center gap-1">
-                  <LogOut className="w-4 h-4" /> Keluar Grup
-                </button>
-              )}
-              <button onClick={() => setShowGroupInfo(false)} className={`px-4 py-2 rounded-xl ${inputBg} opacity-75 hover:opacity-100 text-sm transition`}>Tutup</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Settings Modal */}
-      {showSettings && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className={`w-full max-w-md ${panelBg} border rounded-2xl shadow-2xl p-6 space-y-6`}>
-            <h3 className="text-lg font-bold">Pengaturan Aplikasi</h3>
-            
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="text-sm font-medium">Notifikasi Audio & Getar</h4>
-                  <p className="text-xs opacity-70">Bunyikan suara saat pesan baru</p>
-                </div>
-                <input type="checkbox" checked={notificationsEnabled} onChange={(e) => updateSettings(e.target.checked, undefined, undefined, undefined)} className="w-5 h-5 accent-whatsapp-accent cursor-pointer" />
-              </div>
-
-              <div className="border-t border-gray-500/30 pt-4">
-                <div className="flex items-center justify-between mb-3">
-                  <div>
-                    <h4 className="text-sm font-medium">Kunci Keamanan App (PIN)</h4>
-                    <p className="text-xs opacity-70">Lindungi aplikasi dengan PIN sandi</p>
-                  </div>
-                  <input type="checkbox" checked={appLockEnabled} onChange={(e) => { const enabled = e.target.checked; if (!enabled) updateSettings(undefined, false, '', undefined); else updateSettings(undefined, true, newPasscode || '1234', undefined); }} className="w-5 h-5 accent-whatsapp-accent cursor-pointer" />
-                </div>
-                {appLockEnabled && (
-                  <div>
-                    <label className="block text-xs opacity-70 mb-1">Set PIN Keamanan Baru (4-6 digit)</label>
-                    <input type="password" maxLength={6} value={newPasscode} onChange={(e) => { setNewPasscode(e.target.value); updateSettings(undefined, true, e.target.value, undefined); }} placeholder="Contoh: 1234" className={`w-full px-3 py-2 ${inputBg} rounded-xl text-sm focus:outline-none focus:border-whatsapp-accent`} />
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="flex justify-end pt-2">
-
-              <div className="border-t border-gray-500/30 pt-4">
-                <div className="flex items-center justify-between mb-3">
-                  <div>
-                    <h4 className="text-sm font-medium">Mode Gelap</h4>
-                    <p className="text-xs opacity-70">Switch tema gelap/terang</p>
-                  </div>
-                  <input 
-                    type="checkbox" 
-                    checked={isDarkMode} 
-                    onChange={(e) => updateSettings(undefined, undefined, undefined, e.target.checked)} 
-                    className="w-5 h-5 accent-whatsapp-accent cursor-pointer" 
-                  />
-                </div>
-              </div>
-
-              <div className="border-t border-gray-500/30 pt-4 text-center">
-                <p className="text-sm font-semibold mb-1">PIN Chat v2.0</p>
-                <p className="text-xs opacity-70 mb-2">(Stable Release)</p>
-                <a href="https://www.instagram.com/ardaeko.developer/" target="_blank" rel="noopener noreferrer" className="text-whatsapp-accent hover:underline text-xs inline-flex items-center gap-1 font-semibold">
-                  Develope by @ardaeko <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-              <button onClick={() => setShowSettings(false)} className="px-5 py-2.5 rounded-xl bg-whatsapp-accent text-white hover:bg-emerald-600 text-sm font-medium transition">Simpan & Tutup</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
