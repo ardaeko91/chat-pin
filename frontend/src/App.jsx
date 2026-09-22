@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   MessageSquare, UserPlus, LogOut, Send, Check, CheckCheck, 
   Search, Shield, Copy, CheckCircle2, ChevronLeft, Settings, 
-  Lock, Bell, Image as ImageIcon, Users, Plus, Camera, Trash2, Download, Info, UserX, Sun, Moon, ExternalLink
+  Lock, Bell, Users, Plus, Camera, Trash2, Download, Info, UserX, Sun, Moon, ExternalLink
 } from 'lucide-react';
 import { App as CapApp } from '@capacitor/app';
 import { getSupabase } from './supabaseClient';
@@ -29,7 +29,6 @@ export default function App() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [appLockEnabled, setAppLockEnabled] = useState(false);
   const [newPasscode, setNewPasscode] = useState('');
-  const [showAboutModal, setShowAboutModal] = useState(false);
 
   // Chat state
   const [activeTab, setActiveTab] = useState('chats'); // 'chats' or 'groups'
@@ -70,7 +69,7 @@ export default function App() {
         setSelectedContact(null);
         setSelectedGroup(null);
         setShowGroupInfo(false);
-      } else if (showSettings || showAddModal || showGroupModal || showGroupInfo || showAboutModal) {
+      } else if (showSettings || showAddModal || showGroupModal || showGroupInfo) {
         setShowSettings(false);
         setShowAddModal(false);
         setShowGroupModal(false);
@@ -257,7 +256,7 @@ export default function App() {
             playPersonalSound();
             fetchUnreadCounts();
             if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-              new Notification('Pesan Baru - PIN Chat v1.9', { body: newMsg.message });
+              new Notification('Pesan Baru - PIN Chat v2.0', { body: newMsg.message });
             }
           }
         }
@@ -632,6 +631,21 @@ export default function App() {
     if (selectedGroup) fetchGroupMessages();
   }, [selectedGroup]);
 
+  // Reset group unread when group chat is opened
+  useEffect(() => {
+    if (!selectedGroup) return;
+    const markGroupUnreadAsRead = async () => {
+      const supabase = getSupabase();
+      await supabase
+        .from('schatpin_group_messages')
+        .update({ is_read: true })
+        .eq('group_id', selectedGroup.group_id);
+      fetchGroupMessages();
+      fetchUnreadCounts();
+    };
+    markGroupUnreadAsRead();
+  }, [selectedGroup]);
+
   const handleTypingInput = (e) => {
     setMessageInput(e.target.value);
     if (!selectedContact) return;
@@ -696,62 +710,6 @@ export default function App() {
   };
 
   // Robust Image Sending with Canvas Compression
-  const handleImageSend = async (e) => {
-    const file = e.target.files[0];
-    if (!file || (!selectedContact && !selectedGroup)) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = new Image();
-      img.onload = async () => {
-        const canvas = document.createElement('canvas');
-        let width = img.width;
-        let height = img.height;
-        const maxDim = 400;
-
-        if (width > height && width > maxDim) {
-          height *= maxDim / width;
-          width = maxDim;
-        } else if (height > maxDim) {
-          width *= maxDim / height;
-          height = maxDim;
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, width, height);
-        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.5);
-
-        const supabase = getSupabase();
-        const mediaNotice = "[Foto Dikirim]";
-
-        try {
-          if (selectedContact) {
-            const { data, error } = await supabase
-              .from('schatpin_messages')
-              .insert([{ sender_pin: user.pin, receiver_pin: selectedContact.contact_pin, message: mediaNotice, media_url: compressedBase64, media_type: 'image', is_read: false }])
-              .select()
-              .single();
-            if (error) console.error('Image insert error:', error);
-            if (data) setMessages(prev => [...prev, data]);
-          } else if (selectedGroup) {
-            const { data, error } = await supabase
-              .from('schatpin_group_messages')
-              .insert([{ group_id: selectedGroup.group_id, sender_pin: user.pin, sender_name: user.name, message: mediaNotice, media_url: compressedBase64, media_type: 'image' }])
-              .select()
-              .single();
-            if (error) console.error('Group image insert error:', error);
-            if (data) setGroupMessages(prev => [...prev, data]);
-          }
-        } catch (err) {
-          console.error('Image send catch error:', err);
-        }
-      };
-      img.src = event.target.result;
-    };
-    reader.readAsDataURL(file);
-  };
 
   const handleAddContact = async (e) => {
     e.preventDefault();
@@ -954,7 +912,7 @@ export default function App() {
             <div className="inline-flex items-center justify-center w-16 h-16 bg-whatsapp-accent rounded-full text-white mb-4 shadow-lg">
               <Shield className="w-8 h-8" />
             </div>
-            <h1 className="text-2xl font-bold">PIN Chat v1.9</h1>
+            <h1 className="text-2xl font-bold">PIN Chat v2.0</h1>
             <p className="text-sm mt-1 opacity-70">Chat aman dengan perlindungan kata sandi</p>
           </div>
 
@@ -1029,13 +987,6 @@ export default function App() {
             </div>
           </div>
           <div className="flex items-center gap-1">
-            <button onClick={() => updateSettings(undefined, undefined, undefined, !isDarkMode)} className="p-2 opacity-70 hover:opacity-100 rounded-full transition" title="Ganti Tema">
-              {isDarkMode ? <Sun className="w-5 h-5 text-amber-400" /> : <Moon className="w-5 h-5 text-gray-700" />}
-            </button>
-            <button onClick={() => setShowAboutModal(true)} className="p-2 opacity-70 hover:opacity-100 rounded-full transition" title="Tentang Aplikasi">
-              <Info className="w-5 h-5" />
-            </button>
-            <button onClick={() => setShowAddModal(true)} className="p-2 opacity-70 hover:opacity-100 rounded-full transition" title="Tambah Kontak"><UserPlus className="w-5 h-5" /></button>
             <button onClick={() => setShowGroupModal(true)} className="p-2 opacity-70 hover:opacity-100 rounded-full transition" title="Grup Chat"><Users className="w-5 h-5" /></button>
             <button onClick={() => setShowSettings(true)} className="p-2 opacity-70 hover:opacity-100 rounded-full transition" title="Pengaturan"><Settings className="w-5 h-5" /></button>
             <button onClick={handleLogout} className="p-2 opacity-70 hover:opacity-100 text-red-400 rounded-full transition" title="Keluar"><LogOut className="w-5 h-5" /></button>
@@ -1177,7 +1128,7 @@ export default function App() {
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               <div className="flex justify-center my-2">
                 <span className={`px-3 py-1 ${panelBg} text-xs rounded-lg shadow border flex items-center gap-1.5 opacity-90`}>
-                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> PIN Chat v1.9 • Sempurna & Stabil
+                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> PIN Chat v2.0 • Sempurna & Stabil
                 </span>
               </div>
 
@@ -1237,12 +1188,6 @@ export default function App() {
 
             {/* Footer Input */}
             <form onSubmit={sendMessage} className={`px-4 py-3 ${panelBg} border-t flex items-center gap-3`}>
-              <label className={`p-2.5 opacity-75 hover:opacity-100 cursor-pointer transition rounded-xl ${inputBg} border`} title="Kirim Gambar">
-                <ImageIcon className="w-5 h-5" />
-                <input type="file" accept="image/*" onChange={handleImageSend} className="hidden" />
-              </label>
-              <input
-                type="text"
                 value={messageInput}
                 onChange={handleTypingInput}
                 placeholder="Ketik pesan..."
@@ -1258,7 +1203,7 @@ export default function App() {
             <div className={`w-20 h-20 ${panelBg} rounded-full flex items-center justify-center mb-4 border shadow`}>
               <MessageSquare className="w-10 h-10 text-whatsapp-accent" />
             </div>
-            <h2 className="text-xl font-bold mb-1">PIN Chat v1.9</h2>
+            <h2 className="text-xl font-bold mb-1">PIN Chat v2.0</h2>
             <p className="text-sm max-w-sm">Pilih kontak atau grup di sebelah kiri untuk mulai mengobrol.</p>
           </div>
         )}
@@ -1351,30 +1296,6 @@ export default function App() {
         </div>
       )}
 
-      {/* About App Info Modal */}
-      {showAboutModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className={`w-full max-w-sm ${panelBg} border rounded-2xl shadow-2xl p-6 text-center space-y-4`}>
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-whatsapp-accent rounded-full text-white mb-1 shadow-lg">
-              <Shield className="w-8 h-8" />
-            </div>
-            <h3 className="text-xl font-bold">PIN Chat</h3>
-            <p className="text-xs opacity-70 font-mono">Versi Aplikasi: v1.9 (Stable)</p>
-            <p className="text-xs opacity-80 leading-relaxed">
-              Aplikasi perpesanan privat berbasis PIN unik dengan enkripsi real-time dan tema modern.
-            </p>
-            <div className="pt-2">
-              <a href="https://www.instagram.com/ardaeko.developer/" target="_blank" rel="noopener noreferrer" className="text-whatsapp-accent hover:underline text-xs inline-flex items-center gap-1 font-semibold">
-                Develope by @ardaeko <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
-            <div className="pt-4">
-              <button onClick={() => setShowAboutModal(false)} className="w-full py-2.5 rounded-xl bg-whatsapp-accent text-white hover:bg-emerald-600 text-sm font-medium transition">Tutup</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Settings Modal */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -1408,6 +1329,29 @@ export default function App() {
             </div>
 
             <div className="flex justify-end pt-2">
+
+              <div className="border-t border-gray-500/30 pt-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h4 className="text-sm font-medium">Mode Gelap</h4>
+                    <p className="text-xs opacity-70">Switch tema gelap/terang</p>
+                  </div>
+                  <input 
+                    type="checkbox" 
+                    checked={isDarkMode} 
+                    onChange={(e) => updateSettings(undefined, undefined, undefined, e.target.checked)} 
+                    className="w-5 h-5 accent-whatsapp-accent cursor-pointer" 
+                  />
+                </div>
+              </div>
+
+              <div className="border-t border-gray-500/30 pt-4 text-center">
+                <p className="text-sm font-semibold mb-1">PIN Chat v2.0</p>
+                <p className="text-xs opacity-70 mb-2">(Stable Release)</p>
+                <a href="https://www.instagram.com/ardaeko.developer/" target="_blank" rel="noopener noreferrer" className="text-whatsapp-accent hover:underline text-xs inline-flex items-center gap-1 font-semibold">
+                  Develope by @ardaeko <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
               <button onClick={() => setShowSettings(false)} className="px-5 py-2.5 rounded-xl bg-whatsapp-accent text-white hover:bg-emerald-600 text-sm font-medium transition">Simpan & Tutup</button>
             </div>
           </div>
