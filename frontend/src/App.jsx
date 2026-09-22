@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   MessageSquare, UserPlus, LogOut, Send, Check, CheckCheck, 
   Search, Shield, Copy, CheckCircle2, ChevronLeft, Settings, 
-  Lock, Bell, Image as ImageIcon, Users, Plus, Camera, Trash2, Download, Info
+  Lock, Bell, Image as ImageIcon, Users, Plus, Camera, Trash2, Download, Info, UserX
 } from 'lucide-react';
 import { App as CapApp } from '@capacitor/app';
 import { getSupabase } from './supabaseClient';
@@ -36,6 +36,7 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [groupMessages, setGroupMessages] = useState([]);
   const [messageInput, setMessageInput] = useState('');
+  const [unreadCounts, setUnreadCounts] = useState({}); // contact_pin -> count
   
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
@@ -82,8 +83,8 @@ export default function App() {
   // Initialize session
   useEffect(() => {
     try {
-      const savedUser = localStorage.getItem('schatpin_chat_user_v7');
-      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v7') || '{}');
+      const savedUser = localStorage.getItem('schatpin_chat_user_v8');
+      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v8') || '{}');
       
       if (settings.notificationsEnabled !== undefined) {
         setNotificationsEnabled(settings.notificationsEnabled);
@@ -108,7 +109,7 @@ export default function App() {
     }
   }, []);
 
-  // Presence heartbeat (update last_seen every 10s)
+  // Presence heartbeat (update last_seen every 8s)
   useEffect(() => {
     if (!user) return;
     const supabase = getSupabase();
@@ -120,7 +121,7 @@ export default function App() {
     };
 
     updatePresence();
-    const interval = setInterval(updatePresence, 10000);
+    const interval = setInterval(updatePresence, 8000);
     return () => clearInterval(interval);
   }, [user]);
 
@@ -135,9 +136,9 @@ export default function App() {
 
       if (data && !error) {
         setUser(data);
-        localStorage.setItem('schatpin_chat_user_v7', JSON.stringify(data));
+        localStorage.setItem('schatpin_chat_user_v8', JSON.stringify(data));
       } else {
-        localStorage.removeItem('schatpin_chat_user_v7');
+        localStorage.removeItem('schatpin_chat_user_v8');
       }
     } catch (err) {
       console.error('Failed to verify user', err);
@@ -146,13 +147,13 @@ export default function App() {
 
   const updateSettings = (newNotif, newLock, newPin) => {
     try {
-      const current = JSON.parse(localStorage.getItem('schatpin_settings_v7') || '{}');
+      const current = JSON.parse(localStorage.getItem('schatpin_settings_v8') || '{}');
       const settings = {
         notificationsEnabled: newNotif !== undefined ? newNotif : notificationsEnabled,
         appLockEnabled: newLock !== undefined ? newLock : appLockEnabled,
         passcode: newPin !== undefined ? newPin : (current.passcode || '')
       };
-      localStorage.setItem('schatpin_settings_v7', JSON.stringify(settings));
+      localStorage.setItem('schatpin_settings_v8', JSON.stringify(settings));
       setNotificationsEnabled(settings.notificationsEnabled);
       setAppLockEnabled(settings.appLockEnabled);
     } catch (e) {
@@ -163,7 +164,7 @@ export default function App() {
   const handleUnlock = (e) => {
     e.preventDefault();
     try {
-      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v7') || '{}');
+      const settings = JSON.parse(localStorage.getItem('schatpin_settings_v8') || '{}');
       if (enterPasscode === settings.passcode) {
         setIsLocked(false);
         setEnterPasscode('');
@@ -180,14 +181,14 @@ export default function App() {
     if (!notificationsEnabled) return;
     try {
       if (typeof window !== 'undefined' && 'navigator' in window && navigator.vibrate) {
-        navigator.vibrate([200, 100, 200]);
+        navigator.vibrate([250, 100, 250]);
       }
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(783.99, ctx.currentTime); // G5
-      gain.gain.setValueAtTime(0.2, ctx.currentTime);
+      osc.frequency.setValueAtTime(880, ctx.currentTime); // A5
+      gain.gain.setValueAtTime(0.25, ctx.currentTime);
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start();
@@ -204,9 +205,10 @@ export default function App() {
 
     fetchContacts();
     fetchGroups();
+    fetchUnreadCounts();
 
     const msgChannel = supabase
-      .channel('public:schatpin_messages_v7')
+      .channel('public:schatpin_messages_v8')
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'schatpin_messages' },
@@ -228,8 +230,9 @@ export default function App() {
             }
           } else if (newMsg.receiver_pin === user.pin) {
             playNotificationSound();
+            fetchUnreadCounts();
             if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-              new Notification('Pesan Baru - PIN Chat v1.7', { body: newMsg.message });
+              new Notification('Pesan Baru - PIN Chat v1.8', { body: newMsg.message });
             }
           }
         }
@@ -245,7 +248,7 @@ export default function App() {
       .subscribe();
 
     const groupMsgChannel = supabase
-      .channel('public:schatpin_group_messages_v7')
+      .channel('public:schatpin_group_messages_v8')
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'schatpin_group_messages' },
@@ -265,7 +268,7 @@ export default function App() {
       )
       .subscribe();
 
-    const typingChannel = supabase.channel('room:typing_v7')
+    const typingChannel = supabase.channel('room:typing_v8')
       .on('broadcast', { event: 'typing' }, ({ payload }) => {
         if (selectedContact && payload.sender_pin === selectedContact.contact_pin && payload.receiver_pin === user.pin) {
           setTypingUser(payload.isTyping ? selectedContact.name : '');
@@ -273,15 +276,16 @@ export default function App() {
       })
       .subscribe();
 
-    const contactsInterval = setInterval(() => {
+    const periodicInterval = setInterval(() => {
       fetchContacts();
-    }, 10000);
+      fetchUnreadCounts();
+    }, 8000);
 
     return () => {
       supabase.removeChannel(msgChannel);
       supabase.removeChannel(groupMsgChannel);
       supabase.removeChannel(typingChannel);
-      clearInterval(contactsInterval);
+      clearInterval(periodicInterval);
     };
   }, [user, selectedContact, selectedGroup, notificationsEnabled]);
 
@@ -292,6 +296,29 @@ export default function App() {
   const markAsRead = async (msgId) => {
     const supabase = getSupabase();
     await supabase.from('schatpin_messages').update({ is_read: true }).eq('id', msgId);
+    fetchUnreadCounts();
+  };
+
+  const fetchUnreadCounts = async () => {
+    if (!user) return;
+    const supabase = getSupabase();
+    try {
+      const { data } = await supabase
+        .from('schatpin_messages')
+        .select('sender_pin')
+        .eq('receiver_pin', user.pin)
+        .eq('is_read', false);
+
+      if (data) {
+        const counts = {};
+        data.forEach(m => {
+          counts[m.sender_pin] = (counts[m.sender_pin] || 0) + 1;
+        });
+        setUnreadCounts(counts);
+      }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   // Mark all unread messages from selectedContact as read instantly
@@ -306,8 +333,8 @@ export default function App() {
         .eq('receiver_pin', user.pin)
         .eq('is_read', false);
       
-      // Also fetch messages to sync state
       fetchMessages();
+      fetchUnreadCounts();
     };
     markUnreadAsRead();
   }, [user, selectedContact]);
@@ -354,7 +381,7 @@ export default function App() {
       }
 
       setUser(userData);
-      localStorage.setItem('schatpin_chat_user_v7', JSON.stringify(userData));
+      localStorage.setItem('schatpin_chat_user_v8', JSON.stringify(userData));
     } catch (err) {
       setError(err.message || 'Gagal mendaftar');
     }
@@ -386,14 +413,14 @@ export default function App() {
       }
 
       setUser(data);
-      localStorage.setItem('schatpin_chat_user_v7', JSON.stringify(data));
+      localStorage.setItem('schatpin_chat_user_v8', JSON.stringify(data));
     } catch (err) {
       setError(err.message);
     }
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('schatpin_chat_user_v7');
+    localStorage.removeItem('schatpin_chat_user_v8');
     setUser(null);
     setSelectedContact(null);
     setSelectedGroup(null);
@@ -418,7 +445,7 @@ export default function App() {
 
         if (!error && data) {
           setUser(data);
-          localStorage.setItem('schatpin_chat_user_v7', JSON.stringify(data));
+          localStorage.setItem('schatpin_chat_user_v8', JSON.stringify(data));
         }
       } catch (err) {
         console.error('Failed to update avatar', err);
@@ -537,7 +564,7 @@ export default function App() {
     if (!selectedContact) return;
 
     const supabase = getSupabase();
-    const channel = supabase.channel('room:typing_v7');
+    const channel = supabase.channel('room:typing_v8');
     channel.send({
       type: 'broadcast',
       event: 'typing',
@@ -595,7 +622,7 @@ export default function App() {
     }
   };
 
-  // Ultra-compressed Image Sending for v1.7
+  // Robust Image Sending with Canvas Compression
   const handleImageSend = async (e) => {
     const file = e.target.files[0];
     if (!file || (!selectedContact && !selectedGroup)) return;
@@ -607,7 +634,7 @@ export default function App() {
         const canvas = document.createElement('canvas');
         let width = img.width;
         let height = img.height;
-        const maxDim = 450; // Smaller dimension for guaranteed fast delivery & zero payload error
+        const maxDim = 400;
 
         if (width > height && width > maxDim) {
           height *= maxDim / width;
@@ -621,7 +648,7 @@ export default function App() {
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, width, height);
-        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.4);
+        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.5);
 
         const supabase = getSupabase();
         const mediaNotice = "[Foto Dikirim]";
@@ -684,6 +711,39 @@ export default function App() {
       setSelectedContact({ contact_pin: targetUser.pin, ...targetUser });
     } catch (err) {
       setAddError(err.message);
+    }
+  };
+
+  // Clear Chat History
+  const handleClearChat = async () => {
+    if (!confirm('Hapus semua riwayat pesan dengan kontak ini?')) return;
+    const supabase = getSupabase();
+    try {
+      await supabase
+        .from('schatpin_messages')
+        .delete()
+        .or(`and(sender_pin.eq.${user.pin},receiver_pin.eq.${selectedContact.contact_pin}),and(sender_pin.eq.${selectedContact.contact_pin},receiver_pin.eq.${user.pin})`);
+      setMessages([]);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Unfriend (Hapus Pertemanan)
+  const handleUnfriend = async () => {
+    if (!confirm(`Hapus ${selectedContact.name} dari daftar kontak?`)) return;
+    const supabase = getSupabase();
+    try {
+      await supabase
+        .from('schatpin_contacts')
+        .delete()
+        .eq('user_pin', user.pin)
+        .eq('contact_pin', selectedContact.contact_pin);
+      
+      setSelectedContact(null);
+      await fetchContacts();
+    } catch (e) {
+      console.error(e);
     }
   };
 
@@ -813,7 +873,7 @@ export default function App() {
             <div className="inline-flex items-center justify-center w-16 h-16 bg-whatsapp-accent rounded-full text-white mb-4 shadow-lg">
               <Shield className="w-8 h-8" />
             </div>
-            <h1 className="text-2xl font-bold text-whatsapp-text">PIN Chat v1.7</h1>
+            <h1 className="text-2xl font-bold text-whatsapp-text">PIN Chat v1.8</h1>
             <p className="text-whatsapp-muted text-sm mt-1">Chat aman dengan perlindungan kata sandi</p>
           </div>
 
@@ -911,21 +971,31 @@ export default function App() {
                 <p className="text-sm">Belum ada kontak.</p>
               </div>
             ) : (
-              filteredContacts.map(contact => (
-                <div key={contact.contact_pin} onClick={() => { setSelectedContact(contact); setSelectedGroup(null); }} className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition hover:bg-whatsapp-dark/60 ${selectedContact?.contact_pin === contact.contact_pin ? 'bg-whatsapp-dark/80' : ''}`}>
-                  <div className="relative">
-                    <img src={contact.avatar} alt={contact.name} className="w-12 h-12 rounded-full bg-whatsapp-dark border border-whatsapp-border object-cover" />
-                    {contact.online && <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-whatsapp-green border-2 border-whatsapp-panel rounded-full" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-0.5">
-                      <h3 className="font-semibold text-whatsapp-text text-sm truncate">{contact.name}</h3>
-                      <span className="text-xs text-whatsapp-muted font-mono">{contact.contact_pin}</span>
+              filteredContacts.map(contact => {
+                const unreadCount = unreadCounts[contact.contact_pin] || 0;
+                return (
+                  <div key={contact.contact_pin} onClick={() => { setSelectedContact(contact); setSelectedGroup(null); }} className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition hover:bg-whatsapp-dark/60 ${selectedContact?.contact_pin === contact.contact_pin ? 'bg-whatsapp-dark/80' : ''}`}>
+                    <div className="relative">
+                      <img src={contact.avatar} alt={contact.name} className="w-12 h-12 rounded-full bg-whatsapp-dark border border-whatsapp-border object-cover" />
+                      {contact.online && <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-whatsapp-green border-2 border-whatsapp-panel rounded-full" />}
                     </div>
-                    <p className="text-xs text-whatsapp-muted truncate">{contact.online ? 'Online' : 'Offline'}</p>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <h3 className="font-semibold text-whatsapp-text text-sm truncate">{contact.name}</h3>
+                        <span className="text-xs text-whatsapp-muted font-mono">{contact.contact_pin}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs text-whatsapp-muted truncate">{contact.online ? 'Online' : 'Offline'}</p>
+                        {unreadCount > 0 && (
+                          <span className="px-2 py-0.5 bg-whatsapp-accent text-white font-bold text-[10px] rounded-full shadow">
+                            {unreadCount}
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )
           ) : (
             filteredGroups.length === 0 ? (
@@ -968,18 +1038,30 @@ export default function App() {
                   </p>
                 </div>
               </div>
-              {selectedGroup && (
-                <button onClick={() => fetchGroupMembers(selectedGroup.group_id)} className="p-2 text-whatsapp-muted hover:text-white rounded-full transition" title="Info Grup">
-                  <Info className="w-5 h-5" />
-                </button>
-              )}
+              <div className="flex items-center gap-1">
+                {selectedContact && (
+                  <>
+                    <button onClick={handleClearChat} className="p-2 text-whatsapp-muted hover:text-amber-400 rounded-full transition" title="Hapus Riwayat Chat">
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                    <button onClick={handleUnfriend} className="p-2 text-whatsapp-muted hover:text-red-400 rounded-full transition" title="Hapus Pertemanan (Unfriend)">
+                      <UserX className="w-5 h-5" />
+                    </button>
+                  </>
+                )}
+                {selectedGroup && (
+                  <button onClick={() => fetchGroupMembers(selectedGroup.group_id)} className="p-2 text-whatsapp-muted hover:text-white rounded-full transition" title="Info Grup">
+                    <Info className="w-5 h-5" />
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[radial-gradient(#202c33_1px,transparent_1px)] bg-[size:16px_16px]">
               <div className="flex justify-center my-2">
                 <span className="px-3 py-1 bg-whatsapp-panel text-whatsapp-muted text-xs rounded-lg shadow border border-whatsapp-border flex items-center gap-1.5">
-                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> PIN Chat v1.7 • Sempurna & Stabil
+                  <Shield className="w-3.5 h-3.5 text-whatsapp-accent" /> PIN Chat v1.8 • Fitur Lengkap & Stabil
                 </span>
               </div>
 
@@ -1060,7 +1142,7 @@ export default function App() {
             <div className="w-20 h-20 bg-whatsapp-panel rounded-full flex items-center justify-center mb-4 border border-whatsapp-border shadow">
               <MessageSquare className="w-10 h-10 text-whatsapp-accent" />
             </div>
-            <h2 className="text-xl font-bold text-whatsapp-text mb-1">PIN Chat v1.7</h2>
+            <h2 className="text-xl font-bold text-whatsapp-text mb-1">PIN Chat v1.8</h2>
             <p className="text-sm max-w-sm">Pilih kontak atau grup di sebelah kiri untuk mulai mengobrol.</p>
           </div>
         )}
